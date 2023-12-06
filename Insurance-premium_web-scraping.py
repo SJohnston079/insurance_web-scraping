@@ -4,6 +4,8 @@ from selenium import webdriver
 from selenium.webdriver.common.by import By
 from selenium.webdriver.chrome.service import Service
 from webdriver_manager.chrome import ChromeDriverManager
+from selenium.webdriver.support.ui import WebDriverWait
+from selenium.webdriver.support import expected_conditions as EC
 
 # data management relates imports
 import pandas as pd
@@ -57,6 +59,8 @@ def ami_auto_scrape_all():
                     "Drivers_license_type":drivers_license_type,
                     "Drivers_license_years":drivers_license_years, # years since driver got their learners licence
                     "Incidents_5_year":test_auto_data.loc[person_i,'Incidents_last5years_AMISTATE'],
+                    "NZ_citizen_or_resident":test_auto_data.loc[person_i,'NZ_citizen_or_resident'],
+                    "1_year_Visa":test_auto_data.loc[person_i,'Visa_at_least_1_year']
                     }
         
         # adding info on the date and type of incident to the ami_data dictionary ONLY if the person has had an incident within the last 5 years
@@ -148,10 +152,13 @@ def ami_auto_scrape_all():
         driver.find_element(By.ID, "garagingAddress_manualStreetName").send_keys(data["Street_name"])
         try:
             time.sleep(2) # wait for options list to pop up
-            driver.find_element(By.XPATH, "//*[contains(text(), '{}')]".format(data["Suburb"])).click()
+            driver.find_element(By.XPATH, "//*[contains(text(), '{}') or contains(text(),'{}')]".format(data["Suburb"], data["Postcode"])).click()
         except:
-            driver.find_element(By.ID, "garagingAddress_manualSuburb").send_keys(data["Suburb"])
-            driver.find_element(By.XPATH, "//li[@class='ui-menu-item']//a[contains(text(), '{}')]".format(data["Postcode"])).click()
+            try:
+                driver.find_element(By.XPATH, "//*[contains(text(), '{}') or contains(text(),'{}')]".format(data["Suburb"], data["Postcode"])).click()
+            except:
+                driver.find_element(By.ID, "garagingAddress_manualSuburb").send_keys(data["Suburb"])
+                driver.find_element(By.XPATH, "//li[@class='ui-menu-item']//a[contains(text(), '{}')]".format(data["Postcode"])).click()
 
         # enter drivers birthdate
         driver.find_element(By.ID, "driverDay_1").send_keys(data["Birthdate_day"]) # input day
@@ -164,9 +171,18 @@ def ami_auto_scrape_all():
         else:
             driver.find_element(By.ID, "female_1").click() # selects female
 
-        # enter drivers licsence info
+        # enter drivers licence info
         driver.find_element(By.ID, "DriverLicenceType_1").click() # open the drivers license type options box
         driver.find_element(By.XPATH, "//div[text()='{}']".format(data["Drivers_license_type"])).click() # select the drivers license type
+        if "International" in data["Drivers_license_type"]: # if international licence
+            if data["NZ_citizen_or_resident"] == "Yes": # is the person NZ citizen/ perm resident
+                driver.find_element(By.ID, 'prOrCitizen_1').click()
+            else:
+                driver.find_element(By.ID, 'notPrOrCitizen_1').click()
+                if data["1_year_Visa"] == "Yes": # is the visa of the non-perm resident valid for more than one year
+                    driver.find_element(By.ID, 'validVisa_1').click()
+                else:
+                    driver.find_element(By.ID, 'notValidVisa_1').click()
         driver.find_element(By.ID, "DriverYearsOfDriving_1").click() # open years since got learners box
         driver.find_element(By.XPATH, "//div[text()='{}']".format(data["Drivers_license_years"])).click() # select correct years since got learners
 
@@ -187,31 +203,44 @@ def ami_auto_scrape_all():
 
         # click button to get quote
         driver.find_element(By.ID, "quoteSaveButton").click()
-
-        time.sleep(3)
+        
+        # wait until next page is loaded
+        annual_risk_premium = WebDriverWait(driver, 10).until(EC.presence_of_element_located((By.ID, "annualRiskPremium")))
 
         # scrape the premium
         monthy_premium = float(driver.find_element(By.ID, "dollars").text.replace(",", "") + driver.find_element(By.ID, "cents").text)
-        yearly_premium = float(driver.find_element(By.ID, "annualRiskPremium").text.replace(",", "")[1:])
+        yearly_premium = float(annual_risk_premium.text.replace(",", "")[1:])
 
         # delete all cookies to reset the page
         driver.delete_all_cookies()
 
+        # return the scraped premiums
         return monthy_premium, yearly_premium
 
     # loop through all cars in test spreadsheet
-    for person_i in range(4, 5):
-        # print out the formatted data (for debugging)
-        #print(ami_auto_data_format(person_i))
+    #for person_i in range(17, 18): 19 has issues (dont support claims on that car)
+    for person_i in range(27, len(test_auto_data)):
+        start_time = time.time() # get time of start of each iteration
 
         # run on the ith car/person
         monthy_premium, yearly_premium = ami_auto_scrape_premium(ami_auto_data_format(person_i))
-        print(monthy_premium, yearly_premium)
+        print(person_i, ":", monthy_premium, yearly_premium, end =" -- ")
+        """
+        try:
+            # run on the ith car/person
+            monthy_premium, yearly_premium = ami_auto_scrape_premium(ami_auto_data_format(person_i))
+            print(person_i, ":", monthy_premium, yearly_premium, end =" -- ")
+        except:
+            # print out the formatted data (for debugging)
+            print(person_i, ":", ami_auto_data_format(person_i), end=" -- ")
+        """
+        end_time = time.time() # get time of end of each iteration
+        print("Elapsed time:", round(end_time - start_time,2)) # print out the length of time taken
 
 def main():
     # reads in the test data for car insurance inputs
     global test_auto_data
-    test_auto_data = pd.read_excel("S:\\Library\\IQS\\Test data\\test_auto_data1.xlsx", dtype={"Postcode":"int"})
+    test_auto_data = pd.read_excel("C:\\Users\\samuel.johnston\\Documents\\Insurance_web-scraping\\test_auto_data1.xlsx", dtype={"Postcode":"int"})
 
     #pd.to_numeric(test_auto_data.loc[:,"Postcode"].astype(int)) (when I add all postcode values to the excel spreadsheet add back in to convert all postcodes from floats to ints)
 
