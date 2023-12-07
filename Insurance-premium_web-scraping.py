@@ -107,10 +107,10 @@ def ami_auto_scrape_all():
             Wait.until_not(lambda x: x.find_element(By.ID, "searchByMMYLoading").is_displayed()) # wait until the "loading element" is not being displayed
             time.sleep(0.5)
             driver.find_element(By.ID, "Year").click() # find car year input box then open it
-            Wait.until(EC.element_to_be_clickable((By.XPATH, "//div[text()='{}']".format(data["Vehicle_year"])))).click() # clicking the button which has the correct car model information
+            Wait.until(EC.element_to_be_clickable((By.XPATH, "/html/body/div[6]/div/div[text()='{}']".format(data["Vehicle_year"])))).click() # clicking the button which has the correct car model information
 
         # inputting car body type
-        if driver.find_element(By.XPATH, "/html/body/div[4]/form/div/div[1]/div/div[1]/div/fieldset/ul[1]/li[4]/div/span/input[2]").get_attribute("value") != data["Body_type"].upper():
+        if driver.find_element(By.XPATH, "/html/body/div[4]/form/div/div[1]/div/div[1]/div/fieldset/ul[1]/li[4]/div/span/input[2]").get_attribute("value") != str(data["Body_type"]).upper():
             Wait.until_not(lambda x: x.find_element(By.ID, "searchByMMYLoading").is_displayed()) # wait until the "loading element" is not being displayed
             driver.find_element(By.ID, "BodyType").click() # find car BodyType input box and open it
             driver.find_element(By.XPATH, "//div[text()='{}']".format(data["Body_type"])).click() # clicking the button which has the correct car model information
@@ -157,7 +157,14 @@ def ami_auto_scrape_all():
                 driver.find_element(By.XPATH, "//li[@class='ui-menu-item']//a[contains(text(), '{}')]".format(data["Postcode"])).click()
             except:
                 driver.find_element(By.ID, "garagingAddress_manualSuburb").send_keys(data["Suburb"])
-                driver.find_element(By.XPATH, "//li[@class='ui-menu-item']//a[contains(text(), '{}')]".format(data["Postcode"])).click()
+                try:
+                    driver.find_element(By.XPATH, "//li[@class='ui-menu-item']//a[contains(text(), '{}')]".format(data["Postcode"])).click()
+                except:
+                    driver.find_element(By.ID, "garagingAddress_autoManualRadio").click() # click this button to get out of "Suburb/Town"
+                    if driver.find_element(By.ID, "errorSuburbTownPostcode").is_displayed():
+                        return -1, -1
+                    else:
+                        raise Exception("Other problem!!!!")
         
         # enter drivers birthdate
         driver.find_element(By.ID, "driverDay_1").send_keys(data["Birthdate_day"]) # input day
@@ -223,7 +230,7 @@ def ami_auto_scrape_all():
 
 
     # loop through all cars in test spreadsheet
-    for person_i in range(43, len(test_auto_data)):
+    for person_i in range(47, len(test_auto_data)):
         start_time = time.time() # get time of start of each iteration
 
         # run on the ith car/person
@@ -252,11 +259,11 @@ def main():
     driver = webdriver.Chrome(service=Service(ChromeDriverManager().install()))
 
     # define the implicit wait time for the session
-    driver.implicitly_wait(2)
+    driver.implicitly_wait(1)
 
     # defines Wait, a dynamic wait template
     global Wait
-    Wait = WebDriverWait(driver, 10)
+    Wait = WebDriverWait(driver, 5)
 
     # scrape all of the insurance premiums for the given cars on ami
     ami_auto_scrape_all()
