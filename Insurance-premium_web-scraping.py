@@ -96,29 +96,28 @@ def ami_auto_scrape_all():
         driver.find_element(By.XPATH, "//a[@class='ui-corner-all' and text()='{}']".format(data["Manufacturer"])).click() # clicking the button which has the correct manufacturer information
         if car_manfacturer_element.get_attribute('oldvalue') != data["Manufacturer"]: # checking that correct manufactuerer selected
             return False
-        time.sleep(1) # wait for page to process information
-
 
         # inputting car model
         if driver.find_element(By.XPATH, "/html/body/div[4]/form/div/div[1]/div/div[1]/div/fieldset/ul[1]/li[2]/div/span/input[2]").get_attribute("value") != data["Model"]:
-            driver.find_element(By.ID, "Model").click() # find car model input box and open it
-            driver.find_element(By.XPATH, "//div[text()='{}']".format(data["Model"])).click() # clicking the button which has the correct car model information
-            time.sleep(1) # wait for page to process information
+            Wait.until(EC.element_to_be_clickable((By.ID, "Model"))).click() # wait until car model input box is clickable, then open it
+            Wait.until(EC.element_to_be_clickable((By.XPATH, "//div[text()='{}']".format(data["Model"])))).click() # wait until button which has the correct car model information is clickable, then click
 
         # inputting car year
         if driver.find_element(By.XPATH, "/html/body/div[4]/form/div/div[1]/div/div[1]/div/fieldset/ul[1]/li[3]/div/span/input[2]").get_attribute("value") != data["Vehicle_year"]:
-            driver.find_element(By.ID, "Year").click() # find car year input box and open it
-            driver.find_element(By.XPATH, "//div[text()='{}']".format(data["Vehicle_year"])).click() # clicking the button which has the correct car model information
-            time.sleep(1) # wait for page to process information
+            Wait.until_not(lambda x: x.find_element(By.ID, "searchByMMYLoading").is_displayed()) # wait until the "loading element" is not being displayed
+            time.sleep(0.5)
+            driver.find_element(By.ID, "Year").click() # find car year input box then open it
+            Wait.until(EC.element_to_be_clickable((By.XPATH, "//div[text()='{}']".format(data["Vehicle_year"])))).click() # clicking the button which has the correct car model information
 
         # inputting car body type
-        if driver.find_element(By.XPATH, "/html/body/div[4]/form/div/div[1]/div/div[1]/div/fieldset/ul[1]/li[4]/div/span/input[2]").get_attribute("value") != data["Body_type"]:
+        if driver.find_element(By.XPATH, "/html/body/div[4]/form/div/div[1]/div/div[1]/div/fieldset/ul[1]/li[4]/div/span/input[2]").get_attribute("value") != data["Body_type"].upper():
+            Wait.until_not(lambda x: x.find_element(By.ID, "searchByMMYLoading").is_displayed()) # wait until the "loading element" is not being displayed
             driver.find_element(By.ID, "BodyType").click() # find car BodyType input box and open it
             driver.find_element(By.XPATH, "//div[text()='{}']".format(data["Body_type"])).click() # clicking the button which has the correct car model information
-            time.sleep(1) # wait for page to process information
 
         # inputting car engine size
         if driver.find_element(By.XPATH, "/html/body/div[4]/form/div/div[1]/div/div[1]/div/fieldset/ul[1]/li[5]/div/span/input[2]").get_attribute("value") != data["Engine_size"]:
+            Wait.until_not(lambda x: x.find_element(By.ID, "searchByMMYLoading").is_displayed()) # wait until the "loading element" is not being displayed
             driver.find_element(By.ID, "EngineSize").click() # find car BodyType input box and open it
             driver.find_element(By.XPATH, "//div[text()='{}']".format(data["Engine_size"])).click() # clicking the button which has the correct car model information
         time.sleep(1) # wait for page to process information
@@ -155,11 +154,11 @@ def ami_auto_scrape_all():
             driver.find_element(By.XPATH, "//*[contains(text(), '{}') or contains(text(),'{}')]".format(data["Suburb"], data["Postcode"])).click()
         except:
             try:
-                driver.find_element(By.XPATH, "//*[contains(text(), '{}') or contains(text(),'{}')]".format(data["Suburb"], data["Postcode"])).click()
+                driver.find_element(By.XPATH, "//li[@class='ui-menu-item']//a[contains(text(), '{}')]".format(data["Postcode"])).click()
             except:
                 driver.find_element(By.ID, "garagingAddress_manualSuburb").send_keys(data["Suburb"])
                 driver.find_element(By.XPATH, "//li[@class='ui-menu-item']//a[contains(text(), '{}')]".format(data["Postcode"])).click()
-
+        
         # enter drivers birthdate
         driver.find_element(By.ID, "driverDay_1").send_keys(data["Birthdate_day"]) # input day
         driver.find_element(By.ID, "driverMonth_1").send_keys(data["Birthdate_month"]) # input month
@@ -201,25 +200,30 @@ def ami_auto_scrape_all():
         
         time.sleep(1) # wait a bit for the page to load
 
-        # click button to get quote
-        driver.find_element(By.ID, "quoteSaveButton").click()
-        
-        # wait until next page is loaded
-        annual_risk_premium = WebDriverWait(driver, 10).until(EC.presence_of_element_located((By.ID, "annualRiskPremium")))
-
-        # scrape the premium
-        monthy_premium = float(driver.find_element(By.ID, "dollars").text.replace(",", "") + driver.find_element(By.ID, "cents").text)
-        yearly_premium = float(annual_risk_premium.text.replace(",", "")[1:])
+        # click button to get quote 
+        Wait.until(EC.element_to_be_clickable((By.ID, "quoteSaveButton"))).click() # wait until button clickable then click
 
         # delete all cookies to reset the page
         driver.delete_all_cookies()
 
-        # return the scraped premiums
-        return monthy_premium, yearly_premium
+        # checks if 'we need more information' pop up appears
+
+        try:
+            # wait until next page is loaded
+            annual_risk_premium = Wait.until(EC.presence_of_element_located((By.ID, "annualRiskPremium")))
+
+            # scrape the premium
+            monthy_premium = float(driver.find_element(By.ID, "dollars").text.replace(",", "") + driver.find_element(By.ID, "cents").text)
+            yearly_premium = float(annual_risk_premium.text.replace(",", "")[1:])
+
+            # return the scraped premiums
+            return monthy_premium, yearly_premium
+        except:
+            return -1, -1 # return monthy and yearly premiums as -1 to indicate the premiums cannot be scraped
+
 
     # loop through all cars in test spreadsheet
-    #for person_i in range(17, 18): 19 has issues (dont support claims on that car)
-    for person_i in range(27, len(test_auto_data)):
+    for person_i in range(43, len(test_auto_data)):
         start_time = time.time() # get time of start of each iteration
 
         # run on the ith car/person
@@ -241,7 +245,6 @@ def main():
     # reads in the test data for car insurance inputs
     global test_auto_data
     test_auto_data = pd.read_excel("C:\\Users\\samuel.johnston\\Documents\\Insurance_web-scraping\\test_auto_data1.xlsx", dtype={"Postcode":"int"})
-
     #pd.to_numeric(test_auto_data.loc[:,"Postcode"].astype(int)) (when I add all postcode values to the excel spreadsheet add back in to convert all postcodes from floats to ints)
 
     # loads chromedriver
@@ -249,7 +252,11 @@ def main():
     driver = webdriver.Chrome(service=Service(ChromeDriverManager().install()))
 
     # define the implicit wait time for the session
-    driver.implicitly_wait(3)
+    driver.implicitly_wait(2)
+
+    # defines Wait, a dynamic wait template
+    global Wait
+    Wait = WebDriverWait(driver, 10)
 
     # scrape all of the insurance premiums for the given cars on ami
     ami_auto_scrape_all()
