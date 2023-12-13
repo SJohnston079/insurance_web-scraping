@@ -7,14 +7,26 @@ from webdriver_manager.chrome import ChromeDriverManager
 from selenium.webdriver.support.ui import WebDriverWait
 from selenium.webdriver.support import expected_conditions as EC
 
-# data management relates imports
+# data management/manipulation related imports
 import pandas as pd
 from datetime import datetime
+import math
 
 # defining a function that will scrape all of the ami cars
 def ami_auto_scrape_all():
     # defining a function which take the information from the spreadsheet and formats it so it can be used to scrape premium from ami website
     def ami_auto_data_format(person_i):
+        # formatting street name and type into the correct format
+        street_name = test_auto_data.loc[person_i,'Street_name']
+        street_type = test_auto_data.loc[person_i,'Street_type']
+        if "(" in test_auto_data.loc[person_i,'Street_name']:
+            street_name = test_auto_data.loc[person_i,'Street_name'].split("(")[0].strip()
+
+        # formatting car model type
+        model = test_auto_data.loc[person_i,'Model']
+        if model == "C":
+            model += str(int(math.ceil(test_auto_data.loc[person_i,'CC']/100))) # add on the number of '10 times litres' in the engine
+
         # getting the persons birthdate out as a date object (allows us to get the correct format more easily)
         birthdate = test_auto_data.loc[person_i,'DOB']
 
@@ -40,16 +52,16 @@ def ami_auto_scrape_all():
 
         # define a dict to store information for a given person and car for ami
         ami_data = {"Manufacturer":test_auto_data.loc[person_i,'Manufacturer'],
-                    "Model":test_auto_data.loc[person_i,'Model'],
+                    "Model":model,
                     "Model_type":test_auto_data.loc[person_i,'Type'],
                     "Vehicle_year":test_auto_data.loc[person_i,'Vehicle_year'],
                     "Body_type":test_auto_data.loc[person_i,'Body'].upper(),
-                    "Engine_size":"{}cc/{}L".format(int(test_auto_data.loc[person_i,'CC']), round(test_auto_data.loc[person_i,'CC']/1000, 1)),
+                    "Engine_size":"{}cc".format(int(test_auto_data.loc[person_i,'CC'])),
                     "Immobiliser":test_auto_data.loc[person_i,'Immobiliser_alarm'],
                     "Business_use":test_auto_data.loc[person_i,'BusinessUser'],
                     "Unit":test_auto_data.loc[person_i,'Unit_number'],
                     "Street_number":test_auto_data.loc[person_i,'Street_number'],
-                    "Street_name":test_auto_data.loc[person_i,'Street_name'] + " " + test_auto_data.loc[person_i,'Street_type'],
+                    "Street_name":street_name + " " + street_type,
                     "Suburb":test_auto_data.loc[person_i,'Suburb'].strip(),
                     "Postcode":test_auto_data.loc[person_i,'Postcode'],
                     "Birthdate_day":int(birthdate.strftime("%d")),
@@ -90,7 +102,7 @@ def ami_auto_scrape_all():
         # inputting the car manufacturer
         car_manfacturer_element = driver.find_element(By.ID, "vehicleManufacturer") # find car manufacturer input box
         car_manfacturer_element.click() # open the input box
-        time.sleep(1) # wait for page to process information
+        time.sleep(0.5) # wait for page to process information
         car_manfacturer_element.send_keys(data["Manufacturer"]) # input the company that manufactures the car
         time.sleep(1) # wait for page to process information
         driver.find_element(By.XPATH, "//a[@class='ui-corner-all' and text()='{}']".format(data["Manufacturer"])).click() # clicking the button which has the correct manufacturer information
@@ -113,20 +125,24 @@ def ami_auto_scrape_all():
         if driver.find_element(By.XPATH, "/html/body/div[4]/form/div/div[1]/div/div[1]/div/fieldset/ul[1]/li[4]/div/span/input[2]").get_attribute("value") != str(data["Body_type"]).upper():
             Wait.until_not(lambda x: x.find_element(By.ID, "searchByMMYLoading").is_displayed()) # wait until the "loading element" is not being displayed
             driver.find_element(By.ID, "BodyType").click() # find car BodyType input box and open it
-            driver.find_element(By.XPATH, "//div[text()='{}']".format(data["Body_type"])).click() # clicking the button which has the correct car model information
+            Wait.until(EC.element_to_be_clickable((By.XPATH, "/html/body/div[7]/div/div[text()='{}']".format(data["Body_type"])))).click() # clicking the button which has the correct car model information
 
         # inputting car engine size
         if driver.find_element(By.XPATH, "/html/body/div[4]/form/div/div[1]/div/div[1]/div/fieldset/ul[1]/li[5]/div/span/input[2]").get_attribute("value") != data["Engine_size"]:
             Wait.until_not(lambda x: x.find_element(By.ID, "searchByMMYLoading").is_displayed()) # wait until the "loading element" is not being displayed
             driver.find_element(By.ID, "EngineSize").click() # find car BodyType input box and open it
-            driver.find_element(By.XPATH, "//div[text()='{}']".format(data["Engine_size"])).click() # clicking the button which has the correct car model information
+            Wait.until(EC.element_to_be_clickable((By.XPATH, "/html/body/div[8]/div/div[contains(text(), '{}')]".format(data["Engine_size"])))).click() # clicking the button which has the correct car model information
         time.sleep(1) # wait for page to process information
         
         # select the final vehicle option
         if not pd.isna(data["Model_type"]):
-            driver.find_element(By.XPATH, "//label[contains(text(), '{}')]".format(data["Model_type"])).click() # click button to select final vehicle option
+            try: # try with the standard model type
+                Wait.until(EC.element_to_be_clickable(( By.XPATH, "//label[contains(text(), '{}')]".format(data["Model_type"]) ))).click() # wait until clickable, then click button to select final vehicle option
+            except: # if that doesn't work, try using just the first word of the model type
+                model_type = data["Model_type"].split() # splits the model type string into words (allowing us to check for just 1st word)
+                Wait.until(EC.element_to_be_clickable(( By.XPATH, "//label[contains(text(), '{}')]".format(model_type[0])))).click()
         else:
-            driver.find_element(By.ID, "searchedVehicleSpan_0").click() # click button to select final vehicle option
+            Wait.until(EC.element_to_be_clickable( (By.ID,  "searchedVehicleSpan_0"))).click() # wait until clickable, then click button to select final vehicle option
 
         # selects whether or not the car has an immobiliser
         try:
@@ -160,7 +176,7 @@ def ami_auto_scrape_all():
                 try:
                     driver.find_element(By.XPATH, "//li[@class='ui-menu-item']//a[contains(text(), '{}')]".format(data["Postcode"])).click()
                 except:
-                    driver.find_element(By.ID, "garagingAddress_autoManualRadio").click() # click this button to get out of "Suburb/Town"
+                    driver.find_element(By.ID, "garagingAddress_manualUnitNumber").click() # click this button to get out of "Suburb/Town"
                     if driver.find_element(By.ID, "errorSuburbTownPostcode").is_displayed():
                         return -1, -1
                     else:
@@ -230,7 +246,7 @@ def ami_auto_scrape_all():
 
 
     # loop through all cars in test spreadsheet
-    for person_i in range(47, len(test_auto_data)):
+    for person_i in range(155, len(test_auto_data)):
         start_time = time.time() # get time of start of each iteration
 
         # run on the ith car/person
