@@ -1,5 +1,10 @@
+# File path definitions
+test_auto_data_xlsx = "C:\\Users\\samuel.johnston\\Documents\\Insurance_web-scraping\\test_auto_data1.xlsx"
+#test_home_data_xlsx
+
 # webscraping related imports
 import time
+from selenium.common import exceptions
 from selenium import webdriver
 from selenium.webdriver.common.by import By
 from selenium.webdriver.chrome.service import Service
@@ -45,6 +50,8 @@ def ami_auto_scrape_all():
         drivers_license_years = test_auto_data.loc[person_i,'License_years_TOWER']
         if drivers_license_years < 1:
             drivers_license_years = "Less than a year"
+        elif drivers_license_years == 1:
+            drivers_license_years = "{} year".format(drivers_license_years)
         elif drivers_license_years >= 5:
             drivers_license_years = "5 years or more"
         else: # for for generic 'International' (non-NZ) licence
@@ -102,85 +109,110 @@ def ami_auto_scrape_all():
         # inputting the car manufacturer
         car_manfacturer_element = driver.find_element(By.ID, "vehicleManufacturer") # find car manufacturer input box
         car_manfacturer_element.click() # open the input box
-        time.sleep(0.5) # wait for page to process information
-        car_manfacturer_element.send_keys(data["Manufacturer"]) # input the company that manufactures the car
         time.sleep(1) # wait for page to process information
-        driver.find_element(By.XPATH, "//a[@class='ui-corner-all' and text()='{}']".format(data["Manufacturer"])).click() # clicking the button which has the correct manufacturer information
-        if car_manfacturer_element.get_attribute('oldvalue') != data["Manufacturer"]: # checking that correct manufactuerer selected
-            return False
+        car_manfacturer_element.send_keys(data["Manufacturer"]) # input the company that manufactures the car
+        time.sleep(1.5) # wait for page to process information
+        try:
+            Wait.until(EC.element_to_be_clickable( (By.XPATH, "//a[@class='ui-corner-all' and text()='{}']".format(data["Manufacturer"]) ) )).click() # clicking the button which has the correct manufacturer information
+        except exceptions.TimeoutException:
+            print("CANNOT FIND {manufacturer}".format(manufacturer = data["Manufacturer"]), end=" -- ")
+            return None # return None if can't scrape
 
         # inputting car model
-        if driver.find_element(By.XPATH, "/html/body/div[4]/form/div/div[1]/div/div[1]/div/fieldset/ul[1]/li[2]/div/span/input[2]").get_attribute("value") != data["Model"]:
+        try:
             Wait.until(EC.element_to_be_clickable((By.ID, "Model"))).click() # wait until car model input box is clickable, then open it
             Wait.until(EC.element_to_be_clickable((By.XPATH, "//div[text()='{}']".format(data["Model"])))).click() # wait until button which has the correct car model information is clickable, then click
+        except exceptions.TimeoutException:
+            print("CANNOT FIND {manufacturer} MODEL {model}".format(year = data["Vehicle_year"], manufacturer = data["Manufacturer"], model = test_auto_data.loc[person_i,'Model']), end=" -- ")
+            return None # return None if can't scrape
 
         # inputting car year
-        if driver.find_element(By.XPATH, "/html/body/div[4]/form/div/div[1]/div/div[1]/div/fieldset/ul[1]/li[3]/div/span/input[2]").get_attribute("value") != data["Vehicle_year"]:
+        try:
             Wait.until_not(lambda x: x.find_element(By.ID, "searchByMMYLoading").is_displayed()) # wait until the "loading element" is not being displayed
-            time.sleep(0.5)
+            time.sleep(1) 
             driver.find_element(By.ID, "Year").click() # find car year input box then open it
             Wait.until(EC.element_to_be_clickable((By.XPATH, "/html/body/div[6]/div/div[text()='{}']".format(data["Vehicle_year"])))).click() # clicking the button which has the correct car model information
+        except exceptions.TimeoutException:
+            print("CANNOT FIND {manufacturer} {model} FROM YEAR {year}".format(year = data["Vehicle_year"], manufacturer = data["Manufacturer"], model = test_auto_data.loc[person_i,'Model']), end=" -- ")
+            return None # return None if can't scrape
 
         # inputting car body type
-        if driver.find_element(By.XPATH, "/html/body/div[4]/form/div/div[1]/div/div[1]/div/fieldset/ul[1]/li[4]/div/span/input[2]").get_attribute("value") != str(data["Body_type"]).upper():
+        try:
             Wait.until_not(lambda x: x.find_element(By.ID, "searchByMMYLoading").is_displayed()) # wait until the "loading element" is not being displayed
+            time.sleep(1)
             driver.find_element(By.ID, "BodyType").click() # find car BodyType input box and open it
             Wait.until(EC.element_to_be_clickable((By.XPATH, "/html/body/div[7]/div/div[text()='{}']".format(data["Body_type"])))).click() # clicking the button which has the correct car model information
+        except exceptions.TimeoutException: # if code timeout while waiting for element
+            print("CANNOT FIND {year} {manufacturer} {model} WITH BODY TYPE {body_type}".format(year = data["Vehicle_year"], manufacturer = data["Manufacturer"], model = data["Model"], body_type = data["Body_type"]), end=" -- ")
+            return None # return None if can't scrape
 
         # inputting car engine size
-        if driver.find_element(By.XPATH, "/html/body/div[4]/form/div/div[1]/div/div[1]/div/fieldset/ul[1]/li[5]/div/span/input[2]").get_attribute("value") != data["Engine_size"]:
+        try:
             Wait.until_not(lambda x: x.find_element(By.ID, "searchByMMYLoading").is_displayed()) # wait until the "loading element" is not being displayed
             driver.find_element(By.ID, "EngineSize").click() # find car BodyType input box and open it
             Wait.until(EC.element_to_be_clickable((By.XPATH, "/html/body/div[8]/div/div[contains(text(), '{}')]".format(data["Engine_size"])))).click() # clicking the button which has the correct car model information
+        except exceptions.TimeoutException:
+            print(data["Engine_size"])
+            print("CANNOT FIND {year} {manufacturer} {model} {body_type}, WITH {engine_size}".format(year = data["Vehicle_year"], manufacturer = data["Manufacturer"], model = data["Model"], body_type = data["Body_type"], engine_size = data["Engine_size"]), end=" -- ")
+            return None # return None if can't scrape
         time.sleep(1) # wait for page to process information
         
         # select the final vehicle option
-        if not pd.isna(data["Model_type"]):
+        try:
+            if pd.isna(data["Model_type"]):
+                raise Exception("NA Model_type") # if the model type is NA we raise an exception, thus going to bottom except block ( which it just clicks first option)
+            
             try: # try with the standard model type
-                Wait.until(EC.element_to_be_clickable(( By.XPATH, "//label[contains(text(), '{}')]".format(data["Model_type"]) ))).click() # wait until clickable, then click button to select final vehicle option
-            except: # if that doesn't work, try using just the first word of the model type
+                Wait.until(EC.element_to_be_clickable(( By.XPATH, "/html/body/div[4]/form/div/div[1]/div/div[1]/div/fieldset/div[3]/div/div[2]/*/label[contains(text(), ' {}')]".format(data["Model_type"]) ))).click() # wait until clickable, then click button to select final vehicle option
+            except exceptions.TimeoutException: # if that doesn't work, try split into individual words
                 model_type = data["Model_type"].split() # splits the model type string into words (allowing us to check for just 1st word)
-                Wait.until(EC.element_to_be_clickable(( By.XPATH, "//label[contains(text(), '{}')]".format(model_type[0])))).click()
-        else:
+                try: #try using just the first word of the model type
+                    Wait.until(EC.element_to_be_clickable(( By.XPATH, "//span[@class='ture_messages']//label[contains(text(), ' {}')]".format(model_type[0])))).click()
+                except: # try using just the last word of the model type
+                    Wait.until(EC.element_to_be_clickable(( By.XPATH, "//span[@class='ture_messages']//label[contains(text(), ' {}')]".format(model_type[-1])))).click()
+        except: # Selects the 1st option, if a Model type is not specified
             Wait.until(EC.element_to_be_clickable( (By.ID,  "searchedVehicleSpan_0"))).click() # wait until clickable, then click button to select final vehicle option
+            
 
         # selects whether or not the car has an immobiliser
-        try:
+        try: # we 'try' this because the option to select Immobiliser only comes up on some cars (if there are some models of the car which don't)
             if data["Immobiliser"] == "Yes":
                 driver.find_element(By.ID, "bHasImmobilizer_true").click() # clicks True button
             else:
                 driver.find_element(By.ID, "bHasImmobilizer_false").click() # clicks False button
         except:
-            pass
+            pass # if the button isn't present we move on
 
         # selects whether or not the car is used for business
-        if data["Business_use"] == "No":
-            driver.find_element(By.ID, "bIsBusinessUse_false").click() # clicks "False" button
-        else:
-            driver.find_element(By.ID, "bIsBusinessUse_true").click() # clicks "False" button
-
+        try:
+            if data["Business_use"] == "No":
+                driver.find_element(By.ID, "bIsBusinessUse_false").click() # clicks "False" button
+            else:
+                driver.find_element(By.ID, "bIsBusinessUse_true").click() # clicks "False" button
+        except:
+            print("Cannot click business use button", end=" -- ")
+            return None
 
         # inputs the address the car is kept at
         driver.find_element(By.ID, "garagingAddress_autoManualRadio").click() # click button to enter address manually
         if not pd.isna(data["Unit"]): driver.find_element(By.ID, "garagingAddress_manualUnitNumber").send_keys(data["Unit"]) # input Unit/Apt IF is applicable
         driver.find_element(By.ID, "garagingAddress_manualStreetNumber").send_keys(data["Street_number"])
         driver.find_element(By.ID, "garagingAddress_manualStreetName").send_keys(data["Street_name"])
-        try:
+        try: # this try block is all just attempting various ways of selecting the final address, either through selecting a pop down from the street, or a pop down from the suburb
             time.sleep(2) # wait for options list to pop up
-            driver.find_element(By.XPATH, "//*[contains(text(), '{}') or contains(text(),'{}')]".format(data["Suburb"], data["Postcode"])).click()
-        except:
+            driver.find_element(By.XPATH, "//li[@class='ui-menu-item']//a[contains(text(), '{}') or contains(text(),'{}')]".format(data["Suburb"], data["Postcode"])).click()
+        except: # if no pop up after inputting the street address, try inputting the suburb
+            driver.find_element(By.ID, "garagingAddress_manualSuburb").send_keys(data["Suburb"])
+            time.sleep(1) # wait for elements on the page to load
             try:
                 driver.find_element(By.XPATH, "//li[@class='ui-menu-item']//a[contains(text(), '{}')]".format(data["Postcode"])).click()
             except:
-                driver.find_element(By.ID, "garagingAddress_manualSuburb").send_keys(data["Suburb"])
-                try:
-                    driver.find_element(By.XPATH, "//li[@class='ui-menu-item']//a[contains(text(), '{}')]".format(data["Postcode"])).click()
-                except:
-                    driver.find_element(By.ID, "garagingAddress_manualUnitNumber").click() # click this button to get out of "Suburb/Town"
-                    if driver.find_element(By.ID, "errorSuburbTownPostcode").is_displayed():
-                        return -1, -1
-                    else:
-                        raise Exception("Other problem!!!!")
+                driver.find_element(By.ID, "garagingAddress_manualUnitNumber").click() # click this button to get out of "Suburb/Town"
+                if driver.find_element(By.ID, "errorSuburbTownPostcode").is_displayed():
+                    print("Unable to find address {street_number} {street_name} in the suburb of {suburb} with postcode {postcode}".format(street_number = data["Street_number"], street_name = data["Street_name"], suburb = data["Suburb"], postcode = data["Postcode"]), end=" -- ")
+                    return None
+                else:
+                    raise Exception("Other problem!!!!")
         
         # enter drivers birthdate
         driver.find_element(By.ID, "driverDay_1").send_keys(data["Birthdate_day"]) # input day
@@ -229,46 +261,52 @@ def ami_auto_scrape_all():
         # delete all cookies to reset the page
         driver.delete_all_cookies()
 
-        # checks if 'we need more information' pop up appears
+        # wait until next page is loaded
+        annual_risk_premium = Wait.until(EC.presence_of_element_located((By.ID, "annualRiskPremium")))
 
-        try:
-            # wait until next page is loaded
-            annual_risk_premium = Wait.until(EC.presence_of_element_located((By.ID, "annualRiskPremium")))
+        # scrape the premium
+        monthy_premium = float(driver.find_element(By.ID, "dollars").text.replace(",", "") + driver.find_element(By.ID, "cents").text)
+        yearly_premium = float(annual_risk_premium.text.replace(",", "")[1:])
 
-            # scrape the premium
-            monthy_premium = float(driver.find_element(By.ID, "dollars").text.replace(",", "") + driver.find_element(By.ID, "cents").text)
-            yearly_premium = float(annual_risk_premium.text.replace(",", "")[1:])
-
-            # return the scraped premiums
-            return monthy_premium, yearly_premium
-        except:
-            return -1, -1 # return monthy and yearly premiums as -1 to indicate the premiums cannot be scraped
+        # return the scraped premiums
+        return monthy_premium, yearly_premium
 
 
     # loop through all cars in test spreadsheet
-    for person_i in range(155, len(test_auto_data)):
+    for person_i in range(403, len(test_auto_data)):
         start_time = time.time() # get time of start of each iteration
 
+        print(person_i, ": ", end = "")
         # run on the ith car/person
-        monthy_premium, yearly_premium = ami_auto_scrape_premium(ami_auto_data_format(person_i))
-        print(person_i, ":", monthy_premium, yearly_premium, end =" -- ")
-        """
         try:
-            # run on the ith car/person
-            monthy_premium, yearly_premium = ami_auto_scrape_premium(ami_auto_data_format(person_i))
-            print(person_i, ":", monthy_premium, yearly_premium, end =" -- ")
+            ami_auto_premium = ami_auto_scrape_premium(ami_auto_data_format(person_i))
+            if ami_auto_premium != None: # if an actual result is returned
+                monthy_premium, yearly_premium = ami_auto_premium[0], ami_auto_premium[1]
+                print(monthy_premium, yearly_premium, end =" -- ")
         except:
-            # print out the formatted data (for debugging)
-            print(person_i, ":", ami_auto_data_format(person_i), end=" -- ")
-        """
+            try: # checks if the reason our code failed is because the 'we need more information' pop up appeared
+                Wait.until(EC.visibility_of_element_located( (By.XPATH, "//*[@id='ui-id-3' and text() = 'We need more information']") ) )
+                print("Need more information", end= " -- ")
+            except exceptions.TimeoutException:
+                raise Exception("Unknown Error!!")
+
         end_time = time.time() # get time of end of each iteration
         print("Elapsed time:", round(end_time - start_time,2)) # print out the length of time taken
 
 def main():
     # reads in the test data for car insurance inputs
     global test_auto_data
-    test_auto_data = pd.read_excel("C:\\Users\\samuel.johnston\\Documents\\Insurance_web-scraping\\test_auto_data1.xlsx", dtype={"Postcode":"int"})
-    #pd.to_numeric(test_auto_data.loc[:,"Postcode"].astype(int)) (when I add all postcode values to the excel spreadsheet add back in to convert all postcodes from floats to ints)
+    test_auto_data = pd.read_excel(test_auto_data_xlsx, dtype={"Postcode":"int"})
+    
+    # defines a function to reformat the postcodes in test_auto_data
+    def postcode_reformat(postcode):
+        postcode = str(postcode) # converts the postcode input into a string
+        while len(postcode) != 4:
+            postcode = f"0{postcode}"
+        return postcode
+
+    # pads out the front of postcodes with zeroes (as excel removes leading zeros)
+    test_auto_data['Postcode'] = test_auto_data['Postcode'].apply( postcode_reformat ) 
 
     # loads chromedriver
     global driver # defines driver as a global variable
@@ -286,4 +324,5 @@ def main():
 
     # Close the browser window
     driver.quit()
+
 main()
