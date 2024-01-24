@@ -28,18 +28,19 @@ Useful functions
 def remove_non_numeric(string):
     return ''.join(char for char in string if char.isdigit())
 
+# defines a function to reformat the postcodes in test_auto_data
+def postcode_reformat(postcode):
+    postcode = str(postcode) # converts the postcode input into a string
+    while len(postcode) != 4:
+        postcode = f"0{postcode}"
+    return postcode
+
 def convert_money_str_to_int(money_string, cents = False):
     money_string = money_string.replace("$", "").replace(",","")
     if cents:
         return float(money_string)
     else:
         return int(money_string)
-
-def string_not_empty(string):
-    if len(string) == 0:
-        return 0
-    else:
-        return 1
     
 def load_webdriver():
     # loads chromedriver
@@ -51,10 +52,10 @@ def load_webdriver():
 
     # defines Wait and Wait10, dynamic wait templates
     global Wait
-    Wait = WebDriverWait(driver, 5)
+    Wait = WebDriverWait(driver, 3)
 
     global Wait10
-    Wait10 = WebDriverWait(driver, 5)
+    Wait10 = WebDriverWait(driver, 10)
 
 """
 -------------------------
@@ -64,6 +65,25 @@ def load_webdriver():
 def aa_auto_scrape_all():
     # defining a function which take the information from the spreadsheet and formats it so it can be used to scrape premium from aa website
     def aa_auto_data_format(person_i):
+        # formatting model type
+        model_type = test_auto_data.loc[person_i,'Type']
+
+        # setting NA values to be an empty string
+        if pd.isna(model_type):
+            model_type = ""
+        else:
+            model_type = str(model_type).upper()
+
+        # formatting model series
+        model_series = test_auto_data.loc[person_i,'Series']
+
+        # setting NA values to an empty string
+        if pd.isna(model_series):
+            model_series = ""
+        else:
+            model_series = str(model_series)
+
+
         # getting the street address
         house_number = remove_non_numeric( str(test_auto_data.loc[person_i,'Street_number']) ) # removes all non-numeric characters from the house number (e.g. removes A from 14A)
         street_name = test_auto_data.loc[person_i,'Street_name']
@@ -109,13 +129,40 @@ def aa_auto_scrape_all():
 
         # formatting whether or not the car is an automatic
         automatic = test_auto_data.loc[person_i,'Gearbox']
+
+        # formatting gearbox info (Number of speeds)
+        if " Sp " in  automatic: # if Gearbox starts with 'num Sp ' e.g. (4 Sp ...)
+            num_speeds = str(automatic[0])
+        else:
+            num_speeds = "" # if the number of speeds is not stated, set it to an empty string
+
         if "Manual" in automatic: 
             automatic = "Manual" # the way manual is displayed on the AA website
-        elif "Automatic" in automatic or "CVT" in automatic or "Constantly Variable Transmission" in automatic or "DSG": # all the different types of automatic transmissions (from the test excel spreadsheeet) and how they are labeled
+            transmission_type_short = "MAN"
+            transmission_type_full = "Manual"
+        elif "Sports" in automatic: # if it is a sports automatic
+            transmission_type_short = "SPTS AUTO"
+            transmission_type_full = "Sports Automatic"
+        elif "Automatic" in automatic: # all the different types of automatic transmissions (from the test excel spreadsheeet) and how they are labeled
             automatic = "Auto" # the way they display automatic gearbox on the AA webpage
+            transmission_type_short = "AUTO"
+            transmission_type_full = "Automatic"
+        elif "CVT" in automatic or "Constantly Variable Transmission" in automatic: #CVT/Constantly Variable Transmission (a 'single speed' transmission type (allows smoother transmissions) + is fundementally an automatic))
+            automatic = "Other" 
+            transmission_type_short = "CVT"
+            transmission_type_full = "Constantly Variable Transmission"
+        elif "Reduction Gear" in automatic:
+            automatic = "Other" 
+            transmission_type_short = "Reduction Gear"
+            transmission_type_full = "Reduction Gear"
         else:
-            automatic = "Other" # for all other gearboxes (e.g. reduction gear in electric)
+        # for all other gearboxes (e.g. reduction gear (for electric cars), 
+        # or DSG
+            automatic = "Other" 
+            transmission_type_short = ""
+            transmission_type_full = ""
 
+        
         # formatting the engine size
         engine_size = "{}".format(round(test_auto_data.loc[person_i,'CC'] / 1000, 1))
 
@@ -128,8 +175,12 @@ def aa_auto_scrape_all():
                     "Model":str(test_auto_data.loc[person_i,'Model']),
                     "Automatic":automatic,
                     "Body_type":test_auto_data.loc[person_i,'Body'],
-                    "Model_type":str(test_auto_data.loc[person_i,'Type']).upper(),
+                    "Model_type":model_type,
+                    "Model_series":model_series,
                     "Engine_size":engine_size,
+                    "Num_speeds":num_speeds.upper(),
+                    "Transmission_type_short":transmission_type_short,
+                    "Transmission_type_full":transmission_type_full,
                     "Modifications":test_auto_data.loc[person_i,'Modifications'],
                     "Finance_purchase":test_auto_data.loc[person_i,'FinancePurchase'],
                     "Business_use":test_auto_data.loc[person_i,'BusinessUser'],
@@ -163,7 +214,7 @@ def aa_auto_scrape_all():
                 aa_data["Incident_type"] = "At Fault Event"
 
         return aa_data
-    
+
 
     # scrapes the insurance premium for a single vehicle/person at aa
     def aa_auto_scrape_premium(data):
@@ -179,7 +230,53 @@ def aa_auto_scrape_all():
             except:
                 print("For", list_element_id, car_spec_value, "wasn't found", end=" - ")
                 raise Exception("Exit_to_outer")
-        
+
+        def select_model_variant():
+            # scraping these details from the webpage
+            car_variant_options = tuple(driver.find_elements(By.XPATH, "//*[@id='vehicleList']/tr"))
+            known_details = driver.find_element(By.XPATH, "//*[@id='vehicleDetailSummaryBoxAlt']/div/div[2]").text
+
+            # define the specifications list, in the order that we want to use them to filter out incorrect car variant options
+            specifications_list = ["Model_type", "Model_series", "Engine_size", "Num_speeds", "Transmission"]
+
+            # iterate through all of the potential car specs that we can use to select the correct drop down option
+            for specification in specifications_list:
+                # initialise an empty list to store the selected car variants
+                selected_car_variants = [] 
+
+                # save the actual value of the specification as a variable (to allow formatting manipulation)
+                if specification == "Num_speeds":
+                    outer_specification_value = f"{data[specification]} SPEED"
+                    inner_specification_value = f"{data[specification]}SP"
+                elif specification == "Transmission":
+                    outer_specification_value = data["Transmission_type_full"].upper()
+                    inner_specification_value = data["Transmission_type_short"].upper()       
+                else:
+                    outer_specification_value = data[specification].upper()
+                    inner_specification_value = data[specification].upper()
+
+                # check all car variants for this specification
+                for car_variant in car_variant_options:
+                    
+                    # Check that all of the known car details are correct (either starts with, ends with, or contains the details as a word in the middle of the text)
+                    if car_variant.text.upper().startswith(f"{inner_specification_value} ") or f" {inner_specification_value} " in car_variant.text.upper() or car_variant.text.upper().endswith(f" {inner_specification_value}") \
+                        or car_variant.text.upper().startswith(f"{outer_specification_value} ") or f" {outer_specification_value} " in car_variant.text.upper() or car_variant.text.upper().endswith(f" {outer_specification_value}"):
+
+                        # if this car has correct details add it to the select list
+                        selected_car_variants.append(car_variant) 
+                
+                print(len(selected_car_variants))
+
+                if len(selected_car_variants) == 1:
+                    return selected_car_variants[0]
+                elif len(selected_car_variants) > 1:
+                    car_variant_options = tuple(selected_car_variants)
+                
+
+            for car_variant in car_variant_options:
+                print(car_variant.text)
+            return None
+
         # Open the webpage
         driver.get("https://online.aainsurance.co.nz/motor/pub/aainzquote?insuranceType=car")
 
@@ -207,65 +304,96 @@ def aa_auto_scrape_all():
                 driver.find_element(By.ID, "vehicleRegistrationNumberNz").send_keys(data["Registration_number"]) # input registration number
                 driver.find_element(By.ID, "vehicleRegistrationSearchButtonNz").click() # click check button
 
-                # attempt to find the 1st option for car pop down (if present then we can continue)
+                time.sleep(1.5) # wait for page to load
+
+                # attempt to find the for car summary pop down (if present then we can continue)
                 Wait.until(EC.visibility_of_element_located( (By.ID,  "vehicleDetailSummaryBoxAlt")))
         except: # if the registration is invalid or not provided, then need to enter car details manually
                 
-                driver.find_element(By.ID, "modelSelector-button").click() # click Model Selector button
+                if pd.isna(data["Registration_number"]): # if the vehicle registration number is NA then we need to click this button (else if the registration number is just invalid we dont)
+                    Wait10.until(EC.element_to_be_clickable((By.ID, "modelSelector-button")) ).click() # click Model Selector button
 
-                #try:
+                try:
                     # find year of manufacture list and select the correct year
-                dropdown = Select(driver.find_element(By.ID, "vehicleYearOfManufactureList"))
-                dropdown.select_by_value(str(data["Vehicle_year"]))
+                    dropdown = Select(driver.find_element(By.ID, "vehicleYearOfManufactureList"))
+                    dropdown.select_by_value(str(data["Vehicle_year"]))
 
-                time.sleep(1) # wait for page to load
+                    time.sleep(1) # wait for page to load
 
-                # find car make (manufacturer) list and select the correct manufacturer
-                dropdown = Select(driver.find_element(By.ID, "vehicleMakeList"))
-                dropdown.select_by_value(data["Manufacturer"].upper())
-                time.sleep(3) # wait for page to load
+                    # find car make (manufacturer) list and select the correct manufacturer
+                    dropdown = Select(driver.find_element(By.ID, "vehicleMakeList"))
+                    dropdown.select_by_value(data["Manufacturer"].upper())
 
-                # checking if the car model is already input, if not already input selects correct model
-                car_info_input_testings("vehicleModelList", data["Model"].upper(), 2) 
+                    time.sleep(2) # wait for page to load
 
-                # checking if the car transmission is already input, if not already input selects correct transmission type (auto, manual, or other)
-                car_info_input_testings("vehicleTransmissionList", data["Automatic"][0], 1)  # only the 1st letter needed
+                    # checking if the car model is already input, if not already input selects correct model
+                    car_info_input_testings("vehicleModelList", data["Model"].upper(), 2) 
 
-                # checking if the car body type is already input, if not already input selects correct body type
-                car_info_input_testings("vehicleBodyTypeList", data["Body_type"], 0) 
-                #except:
-                #    return -1, -1
+                    # checking if the car transmission is already input, if not already input selects correct transmission type (auto, manual, or other)
+                    car_info_input_testings("vehicleTransmissionList", data["Automatic"][0], 1)  # only the 1st letter needed
+
+                    # checking if the car body type is already input, if not already input selects correct body type
+                    car_info_input_testings("vehicleBodyTypeList", data["Body_type"], 0) 
+                except:
+                    print(f"Couldn't find {data["Vehicle_year"]} {data["Manufacturer"]} {data["Model"]} with body type {data["Body_type"]} and {data["Automatic"]} transmission", end=" -- ")
+                    return -1, -1
 
                 driver.find_element(By.ID, "findcar").click()  # click find your car button
 
         
         # check if we need to select a model variant
         try:
+
+            time.sleep(1) # wait for page to load
+
             Wait.until(EC.visibility_of_element_located( (By.ID, "vehicleList-wrapper") )) # checks/ waits until if the pop down to select the variant is visable
-            try:
-                if pd.isna(data["Model_type"]): # if this the model type is NA then raise an error (caught by except block)
-                    raise Exception("Model Type is NA")
-                
-                # select the final (most) correct car variant (when BOTH car variant and engine size are present as options)
-                WebDriverWait(driver, 1).until(EC.element_to_be_clickable((By.XPATH, "//tr[descendant::label[contains(text(), '{model_type}')] and descendant::label[contains(text(), '{engine_size}')]]".format(model_type=data["Model_type"], engine_size=data["Engine_size"])))).click()
-            except:
-                try: # try to find the correct car variant (if ONLY car variant is present as an option)
-                    driver.find_element(By.XPATH, "//tbody[@id ='vehicleList']/tr[descendant::label[contains(text(), '{}')]]".format(data["Model_type"])).click()
-                except:
-                    driver.find_element(By.XPATH, "//*[@id='vehicleList']/tr[1]").click() # click the first option if we cant find 
-        except: # if we dont need to select a model variant then continue on
+
+            time.sleep(2) # wait for page to load
+
+            # select the correct model variant
+            selected_model_variant_element = select_model_variant()
+
+
+            # if we couldnt find a singular correct model variant, exit
+            if selected_model_variant_element == None:
+
+                # wait for debugging purposes
+                input_text = ""
+                while input_text != "go":
+                    time.sleep(1) # wait for debugging
+                    input_text = input("Enter 'go' to continue: ")
+
+
+                print(end=" -- ") # print for formatting the time elapsed
+                return None
+
+            # click the selected model variant
+            selected_model_variant_element.click()
+
+        except exceptions.TimeoutException: # if we dont need to select a model variant then continue on
             pass
             
         # click button to move to car features page
         time.sleep(1) 
         Wait.until(EC.element_to_be_clickable( (By.ID, "_eventId_submit") )).click()
 
+
         # click button to state whether or not the car has any modifications
-        if data["Modifications"] == "No":
-            Wait10.until(EC.element_to_be_clickable( (By.XPATH, "//*[@id='accessoriesAndModificationsButtons']/label[2]/span") )).click() # click "No" modifications button
-        else:
-            Wait10.until(EC.element_to_be_clickable( (By.XPATH, "//*[@id='accessoriesAndModificationsButtons']/label[1]/span") )).click() # click "Yes" modifications button
-            raise Exception("Not insurable: Modifications")
+        try:
+            if data["Modifications"] == "No":
+                Wait10.until(EC.element_to_be_clickable( (By.XPATH, "//*[@id='accessoriesAndModificationsButtons']/label[2]/span") )).click() # click "No" modifications button
+            else:
+                Wait10.until(EC.element_to_be_clickable( (By.XPATH, "//*[@id='accessoriesAndModificationsButtons']/label[1]/span") )).click() # click "Yes" modifications button
+                raise Exception("Not insurable: Modifications")
+        except exceptions.TimeoutException:
+            try:
+                Wait.until(EC.presence_of_element_located((By.ID, "jeopardy")))
+                print("We need a bit more information to progress with your quote (requires calling in)", end= " -- ")
+                return None
+            except exceptions.TimeoutException:
+                print("Unknown issue (from modifactions code section))", end=" -- ")
+                return None
+        
 
         # click button to move to car details page
         driver.find_element(By.ID, "_eventId_submit").click()
@@ -287,8 +415,8 @@ def aa_auto_scrape_all():
         try:
             time.sleep(1) # wait a bit to let the page load
             driver.find_element(By.ID, "address.suburbPostcodeRegionCity").send_keys(data["Postcode"]) # input the postcode
-            time.sleep(2)
-            Wait.until(EC.element_to_be_clickable( (By.XPATH, "//*[@id='quote']/fieldset[3]/div[1]/div[1]/ul/li[contains(text(), '{}')]".format(data["Suburb"])) )).click() # find the pop down option with the correct suburb
+            time.sleep(3) # wait a bit for the page to load
+            Wait10.until(EC.element_to_be_clickable( (By.XPATH, "//*[@id='quote']/fieldset[3]/div[1]/div[1]/ul/li[contains(text(), '{}')]".format(data["Suburb"])) )).click() # find the pop down option with the correct suburb
 
         except exceptions.TimeoutException:
             Wait.until(EC.element_to_be_clickable((By.XPATH, "//*[@id='quote']/fieldset[3]/div[1]/div[1]/ul/li[1]"))).click() # if the above doesn't work, just select the first pop down option
@@ -300,12 +428,21 @@ def aa_auto_scrape_all():
 
         # if the pop up to further clarify address appears
         try:
-            Wait.until(EC.visibility_of_element_located((By.XPATH, "//*[@id='suggestedAddresses-container']/div[2]/div"))) # checking if the pop up appears
-            driver.find_element(By.XPATH, "//*[@id='suggestedAddresses-container']/div[2]/div/label/span[contains(text(), '{}') and contains(text(), '{}')]".format(data["Street"].lower().title(),
+            time.sleep(1) # wait for page to load
+            Wait.until_not(EC.visibility_of_element_located((By.XPATH, "//*[@id='suggestedAddresses-container']/div[2]/div"))) # checking if pop up, indicating that more info on address is needed, does not appear
+
+        except exceptions.TimeoutException: # go here only if the pop up does appear
+            try:
+                driver.find_element(By.XPATH, "//*[@id='suggestedAddresses-container']/div[2]/div/label/span[contains(text(), '{}') and contains(text(), '{}')]".format(data["Street"].lower().title(),
                                                                                                                                                                       data["Postcode"])).click() # clicking the address that has the correct street name and postcode
+            except exceptions.NoSuchElementException:
+                print(f"Couldn't find address, {data["Street_address"]}, {data["Suburb"]} with postcode {data["Postcode"]}", end=" - ")
+                return None
+            
             driver.find_element(By.ID, "_eventId_submit").click() # click button to move to driver details page
-        except exceptions.TimeoutException:
-            pass
+        
+        time.sleep(1) # wait for page to load
+
 
         # inputing main drivers date of birth
         Wait10.until(EC.element_to_be_clickable( (By.ID, "mainDriver.dateOfBirth-day") )).click() # open DOB day drop down
@@ -395,7 +532,7 @@ def aa_auto_scrape_all():
         except exceptions.TimeoutException:
             pass
         
-        time.sleep(1) # wait for page to load
+        time.sleep(2) # wait for page to load
 
         # clicks the persons desired excess level
         Wait.until(EC.element_to_be_clickable( (By.XPATH, "//*[@id='excessContainer']/label[{}]".format(data["Excess_index"])) )).click()
@@ -417,7 +554,7 @@ def aa_auto_scrape_all():
         return monthly_premium, yearly_premium
     
     # loop through all cars in test spreadsheet
-    for person_i in range(0, len(test_auto_data)): # have tested 0-119
+    for person_i in range(60, len(test_auto_data)): # have tested 0-212
         start_time = time.time() # get time of start of each iteration
 
         print(person_i, ": ", end = "")
@@ -438,8 +575,14 @@ def aa_auto_scrape_all():
         end_time = time.time() # get time of end of each iteration
         print("Elapsed time:", round(end_time - start_time,2)) # print out the length of time taken
 
-        # delete all cookies to reset the page
-        driver.delete_all_cookies()
+        try:
+            # delete all cookies to reset the page
+            driver.delete_all_cookies()
+        except exceptions.TimeoutException: # if we timeout while trying to reset the cookies
+
+            print("New Webdriver window", end=" -- ")
+            driver.quit() # quit this current driver
+            load_webdriver() # open a new webdriver session
 
 
 
@@ -538,11 +681,12 @@ def ami_auto_scrape_all():
         # attempt to input the car registration number (if it both provided and valid)
         registration_na = pd.isna(data["Registration_number"])
         if not registration_na: # if there is a registration number provided
-            driver.find_element(By.ID, "vehicle_searchRegNo").send_keys(data["Registration_number"]) # input registration
+            Wait10.until(EC.presence_of_element_located((By.ID, "vehicle_searchRegNo")) ).send_keys(data["Registration_number"]) # input registration
             driver.find_element(By.ID, "ie_regSubmitButton").click() # click submit button
 
             # attempt to find the 1st option for car pop down (if present then we can continue)
             try: 
+
                 Wait.until(EC.element_to_be_clickable( (By.ID,  "searchedVehicleSpan_0")))
                 registration_invalid = False
             except: # if that element is not findable then the registration must have been invalid
@@ -577,7 +721,7 @@ def ami_auto_scrape_all():
             try:
                 Wait.until_not(lambda x: x.find_element(By.ID, "searchByMMYLoading").is_displayed()) # wait until the "loading element" is not being displayed
                 time.sleep(1) 
-                driver.find_element(By.ID, "Year").click() # find car year input box then open it
+                driver.find_element(By.ID, "Year")
                 Wait.until(EC.element_to_be_clickable((By.XPATH, "/html/body/div[6]/div/div[text()='{}']".format(data["Vehicle_year"])))).click() # clicking the button which has the correct car model information
             except exceptions.TimeoutException:
                 print("CANNOT FIND {manufacturer} {model} FROM YEAR {year}".format(year = data["Vehicle_year"], manufacturer = data["Manufacturer"], model = test_auto_data.loc[person_i,'Model']), end=" -- ")
@@ -592,6 +736,8 @@ def ami_auto_scrape_all():
             except exceptions.TimeoutException: # if code timeout while waiting for element
                 print("CANNOT FIND {year} {manufacturer} {model} WITH BODY TYPE {body_type}".format(year = data["Vehicle_year"], manufacturer = data["Manufacturer"], model = data["Model"], body_type = data["Body_type"]), end=" -- ")
                 return None # return None if can't scrape
+
+
 
             # inputting car engine size
             try:
@@ -749,32 +895,31 @@ def ami_auto_scrape_all():
             # delete all cookies to reset the page
             driver.delete_all_cookies()
         except exceptions.TimeoutException: # if we timeout while trying to reset the cookies
-            driver.quit() # quit this current driver
 
+            print("New Webdriver window", end=" -- ")
+            driver.quit() # quit this current driver
             load_webdriver() # open a new webdriver session
 
 
 
 
-
-
-
+# defining a function that will scrape all of the tower cars
 def tower_auto_scrape_all():
 # defining a function which take the information from the spreadsheet and formats it so it can be used to scrape premium from tower website
     def tower_auto_data_format(person_i):
+        # saving manufacturer as a variable
+        manufacturer = str(test_auto_data.loc[person_i,'Manufacturer']).title()
+
         # formatting model type
         model_type = test_auto_data.loc[person_i,'Type']
         if pd.isna(model_type):
             model_type = ""
 
         # getting the street address
-        house_number = remove_non_numeric( str(test_auto_data.loc[person_i,'Street_number']) ) # removes all non-numeric characters from the house number (e.g. removes A from 14A)
         street_name = test_auto_data.loc[person_i,'Street_name']
         street_type = test_auto_data.loc[person_i,'Street_type']
         suburb = test_auto_data.loc[person_i,'Suburb']
-        bracket_words = ""
         if "(" in street_name:
-            bracket_words = re.findall(r'\((.*?)\)' ,street_name)[0] # extacts all words from the name which are within brackets (e.g. King street (West) will have West extracted)
             street_name = street_name.split("(")[0].strip()
         if "MT " in suburb:
             suburb = suburb.replace("MT", "MOUNT")
@@ -785,26 +930,34 @@ def tower_auto_scrape_all():
             unit_number = ""
 
         # formatting engine size
-        engine_size = f"{round(math.ceil(test_auto_data.loc[person_i,'CC']/100)/10, 1)}i"
+        engine_size = f"{round(test_auto_data.loc[person_i,'CC']/1000, 1)}"
+        if engine_size == "0.0": # if there is no cubic centimetres engine measurement for car (is electric)
+            engine_size = ""
 
         # formatting car model type (for when the label is just C)
         model = test_auto_data.loc[person_i,'Model']
         if model == "C":
             model += str(engine_size) # add on the number of '10 times litres' in the engine
         
-        # formatting gearbox info
+        ## formatting gearbox info
         automatic = test_auto_data.loc[person_i,'Gearbox']
+
+        # formatting gearbox info (Number of speeds)
+        if " Sp " in  automatic: # if Gearbox starts with 'num Sp ' e.g. (4 Sp ...)
+            num_speeds = automatic[:4].replace(" ", "").lower()
+        else:
+            num_speeds = "" # if the number of speeds is not stated, set it to an empty string
+
+        # formatting gearbox info (what transmission type)
         if "Constantly Variable Transmission" in automatic or "CVT" in automatic:
             automatic = "CVT"  
         elif "Manual" in automatic: 
-            num_speeds = automatic[:4].replace(" ", "").lower()
             automatic = "Man" 
         elif "Automatic" in automatic or "DSG": # all the different types of automatic transmissions (from the test excel spreadsheeet) and how they are labeled
-            num_speeds = automatic[:4].replace(" ", "").lower()
             automatic = "Auto" 
         else:
-            num_speeds = automatic[:4].replace(" ", "").lower()
             automatic = "Other" # for all other gearboxes (e.g. reduction gear in electric)
+
 
         # getting the persons birthdate out as a date object (allows us to get the correct format more easily)
         birthdate = test_auto_data.loc[person_i,'DOB']
@@ -816,16 +969,14 @@ def tower_auto_scrape_all():
         excess_index = 0
         while excess > excess_options[excess_index] and excess_index < 3: # 3 is the index of the largest option, so should not iterate up further if the index has value 3
             excess_index += 1
-        
-        
 
         # define a dict to store information for a given person and car for ami
         tower_data = {"Registration_number":test_auto_data.loc[person_i,'Registration'],
-                    "Manufacturer":test_auto_data.loc[person_i,'Manufacturer'].title(),
-                    "Model":model.title(),
+                    "Manufacturer":manufacturer,
+                    "Model":str(model).title(),
                     "Model_type":model_type,
                     "Vehicle_year":test_auto_data.loc[person_i,'Vehicle_year'],
-                    "Body_type":test_auto_data.loc[person_i,'Body'].title(),
+                    "Body_type":str(test_auto_data.loc[person_i,'Body']).title(),
                     "Engine_size":engine_size,
                     "Num_speeds":num_speeds,
                     "Automatic":automatic,
@@ -844,7 +995,8 @@ def tower_auto_scrape_all():
                     "Cover_type":test_auto_data.loc[person_i,'CoverType'],
                     "Agreed_value":int(round(test_auto_data.loc[person_i,'AgreedValue'])), # rounds the value to nearest whole number then converts to an integer
                     "Excess_index":excess_index,
-                    "Modifications":test_auto_data.loc[person_i,'Modifications']
+                    "Modifications":test_auto_data.loc[person_i,'Modifications'],
+                    "Immobiliser":test_auto_data.loc[person_i,'Immobiliser_alarm']
                     }
         
         # adding info on the date and type of incident to the ami_data dictionary ONLY if the person has had an incident within the last 5 years
@@ -875,16 +1027,18 @@ def tower_auto_scrape_all():
         # Open the webpage
         driver.get("https://my.tower.co.nz/quote/car/page1")
 
+        # wait for page to load
+        time.sleep(1)
 
         # selects whether or not the car is used for business
-        try:
+        try: # if error go to except
             if data["Business_use"] == "Yes":
                 Wait10.until(EC.element_to_be_clickable( (By.ID, "btnvehicleUsedForBusiness-0") )).click() # clicks "Yes" business use button
             elif data["Business_use"] == "No":
                 Wait10.until(EC.element_to_be_clickable( (By.ID, "btnvehicleUsedForBusiness-1") )).click() # clicks "No" business use button
             else:
                 Wait10.until(EC.element_to_be_clickable( (By.ID, "btnvehicleUsedForBusiness-2") )).click() # clicks "Sometimes" business use button
-        except:
+        except: 
             print("Cannot click business use button", end=" -- ")
             return None
 
@@ -897,25 +1051,57 @@ def tower_auto_scrape_all():
         # attempt to input the car registration number (if it both provided and valid)
         try: 
             if pd.isna(data["Registration_number"]): # if the vehicle registration number is NA then raise an exception (go to except block, skip rest of try)
-                raise Exception("Registration_NA")
+                raise ValueError("Registration_NA")
             else:
+                # attempt to input the license plate number. If it doesn't work then raise value error to go enter the car details manually
                 driver.find_element(By.ID, "txtLicencePlate").send_keys(data["Registration_number"]) # input registration number
                 driver.find_element(By.ID, "btnSubmitLicencePlate").click() # click seach button
+                
+
+                time.sleep(1) # wait for page to load
+                
 
                 try:
-                    # clicking the button which has the correct model type information, as well as the correct Gearbox (Automatic and Num_speeds) as well as Engine_Size
-                    Wait.until(EC.element_to_be_clickable( (By.XPATH, f"//*[@id='questionCarLookup']/div[4]/div[2]/fieldset/div/label/span[contains(text(), '{data["Model_type"]}') and " + 
-                                                        f"contains(text(), '{data["Automatic"]}') and " + 
-                                                        f"contains(text(), '{data["Num_speeds"]}') and " +
-                                                        f"contains(text(), '{data["Engine_size"]}')]") )).click()
-                except exceptions.TimeoutException:
-                    pass
+                    Wait.until_not(EC.presence_of_element_located( (By.XPATH, "//*[@id='carLookupError']/div/p[text() = 'No record found']") )) # checks that the carLookupError pop up does NOT appear
+                except exceptions.TimeoutException: # if the carLookupError pop up appears
+                    raise ValueError("Registration_Invalid")
 
-   
-        except: # if the registration is invalid or not provided, then need to enter car details manually
+                try:
 
+                    # find the elements which lists the cars details, after having input the registration number
+                    registration_found_car = Wait10.until(EC.presence_of_element_located((By.XPATH, "//*[@id='questionCarLookup']/div[4]/div[@class='car-results']")) )
+                    registration_found_car_text = registration_found_car.text
+
+                    # if the car manufacturer, model, body type and year of production are not correct, then enter details manually
+                    if not ((str(data["Manufacturer"]) in registration_found_car_text) and (str(data["Model"]) in registration_found_car_text) and (str(data["Body_type"]) in registration_found_car_text) and (str(data["Vehicle_year"]) in registration_found_car_text)):
+                        print("Car found by registration number is incorrect!", end=" -- ")
+                        raise ValueError("Car found by registration number is incorrect!")
+                    
+                    # if the car model type, transmission type, number of speeds and engine size (num of litres) are not correct, then enter details manually
+                    extra_registration_found_car_text = registration_found_car.find_element(By.XPATH, ".//p").text
+                    if not ( (str(data["Model_type"]) in extra_registration_found_car_text) and (str(data["Automatic"]) in extra_registration_found_car_text) and (str(data["Num_speeds"]) in extra_registration_found_car_text) and (str(data["Engine_size"]) in extra_registration_found_car_text) ):
+                        print("Car found by registration number has several options", end=" -- ")
+                        raise Exception("Car found by registration number has several options")
+
+                except: # if the car information automatically found (by entering license plate) is false, then go check if options box is present
+
+                    # try to select correct option 
+                    try:
+                        # clicking the button which has the correct model type information, as well as the correct Gearbox (Automatic and Num_speeds) as well as Engine_Size
+                        Wait.until(EC.element_to_be_clickable( (By.XPATH, f"//*[@id='questionCarLookup']/div[4]/div[2]/fieldset/div/label/span[contains(text(), '{data["Model_type"]}') and " + 
+                                                            f"contains(text(), '{data["Automatic"]}') and " + 
+                                                            f"contains(text(), '{data["Num_speeds"]}') and " +
+                                                            f"contains(text(), '{data["Engine_size"]}')]") )).click()
+                    except exceptions.TimeoutException: # if the options box not present, then enter the details manually
+                        Wait.until(EC.element_to_be_clickable( (By.ID, "lnkEnterMakeModel") )).click() # Find the button "Enter your car's details" and click it
+                        raise ValueError("Car information incorrect")
+
+
+        except ValueError: # if the registration is invalid or not provided, then need to enter car details manually
+            
             # Find the button "Enter your car's details" and click it
-            Wait.until(EC.element_to_be_clickable( (By.ID, "lnkEnterMakeModel") )).click()
+            if pd.isna(data["Registration_number"]): # only if registration NA do we need to click the button (if the plate number is just invalid, then the drop down automatically opens, so dont need to click this button)
+                Wait.until(EC.element_to_be_clickable( (By.ID, "lnkEnterMakeModel") )).click()
 
             # inputting the car manufacturer
             try:
@@ -939,10 +1125,10 @@ def tower_auto_scrape_all():
                 if car_model_text_input.get_attribute("value") == "": # checks the input fields value is currently empty
                     car_model_text_input.send_keys(data["Model"]) 
 
-                    time.sleep(1) # wait for page to load
+                    time.sleep(2) # wait for page to load
                     
                     # wait until button which has the correct car model information is clickable, then click (i just click the 1st drop down option because I assume this must be the correct)
-                    Wait.until(EC.element_to_be_clickable( (By.XPATH, "//*[@id='carModels-menu-list']/li[1]/div/div[2]/div") )).click() 
+                    Wait10.until(EC.element_to_be_clickable( (By.XPATH, "//*[@id='carModels-menu-list']/li[1]/div/div[2]/div") )).click() 
             except exceptions.TimeoutException:
                 print(f"CANNOT FIND {data["Manufacturer"]} MODEL {data["Model"]}", end=" -- ")
                 return None # return None if can't scrape
@@ -977,40 +1163,54 @@ def tower_auto_scrape_all():
 
             # inputting car vehicle type
             try:
-                model_type_string = data["Model_type"] + " "*string_not_empty(data["Model_type"]) + data["Body_type"] # creates a string with 'model type" "bodytype" (if model_type is empty, the just is body type)
                 car_model_type_text_input = Wait.until(EC.presence_of_element_located((By.ID, "carVehicleTypes"))) # find the model type input box and then input the model type
                 if car_model_type_text_input.get_attribute("value") == "": # checks the input fields value is currently empty
-                    car_model_type_text_input.send_keys(model_type_string) # inputs the body type
+                    car_model_type_text_input.send_keys(data["Model_type"]) # inputs the body type
 
                     time.sleep(1) # wait for page to load
 
                     # clicking the button which has the correct model type information, as well as the correct Gearbox (Automatic and Num_speeds) as well as Engine_Size
-                    Wait.until(EC.element_to_be_clickable( (By.XPATH, f"//*[@id='carVehicleTypes-menu-list']/li/div[contains(@value, '{data["Model_type"]} {data["Body_type"]}') and " + 
+                    Wait.until(EC.element_to_be_clickable( (By.XPATH, f"//*[@id='carVehicleTypes-menu-list']/li/div[contains(@value, '{data["Body_type"]}') and " + 
                                                             f"contains(@value, '{data["Automatic"]}') and " + 
                                                             f"contains(@value, '{data["Num_speeds"]}') and " +
-                                                            f"contains(@value, '{data["Engine_size"]}')]") )).click()         
+                                                            f"contains(@value, '{data["Engine_size"]}')]") )).click()       
             except exceptions.TimeoutException:
+                
+                # try searching in a less strict way
                 try:
-                    if data["Automatic"] == "Auto": # some cars that are autos are labeled as CVT's
-                        Wait.until(EC.element_to_be_clickable( (By.XPATH, f"//*[@id='carVehicleTypes-menu-list']/li/div[contains(@value, '{data["Model_type"]} {data["Body_type"]}') and " + 
-                                                            f"( contains(@value, 'Auto') or contains(@value, 'CVT') ) and " + 
+                    if data["Automatic"] == "Auto" or data["Automatic"] == "CVT": # some cars that are autos are labeled as CVT's
+                        Wait.until(EC.element_to_be_clickable( (By.XPATH, f"//*[@id='carVehicleTypes-menu-list']/li/div[contains(@value, '{data["Body_type"]}') and " + 
+                                                            f"( contains(@value, 'Auto') or contains(@value, 'CVT') or contains(@value, 'Skyactiv-Drive')) and " + # note Skyactive-Drive is a Mazda specific automatic
+                                                            f"contains(@value, '{data["Engine_size"]}')]") )).click()
+                    elif data["Automatic"] == "Man": # if the car is a manual
+                        Wait.until(EC.element_to_be_clickable( (By.XPATH, f"//*[@id='carVehicleTypes-menu-list']/li/div[contains(@value, '{data["Body_type"]}') and " + 
+                                                            f"( contains(@value, 'Man') or contains(@value, 'DCT') or contains(@value, 'Skyactiv-MT')) and " + # note Skyactive-MT is a Mazda specific manual
                                                             f"contains(@value, '{data["Engine_size"]}')]") )).click()
                 except exceptions.TimeoutException:
                     print(f"CANNOT FIND {data["Vehicle_year"]} {data["Manufacturer"]} {data["Model"]} {data["Model_type"]} {data["Body_type"]}, {data["Num_speeds"]} {data["Automatic"]} WITH ENGINE SIZE {data["Engine_size"]}", end=" -- ")
                     return None # return None if can't scrape
         
+        # enters whether the car has an immobiliser, if needed
+        try:
+            if data["Immobiliser"] == "Yes":
+                Wait.until(EC.element_to_be_clickable( (By.ID, "btnvehicleAlarm-0") )).click()
+            else: # if No Immobiliser alarm
+                Wait.until(EC.element_to_be_clickable( (By.ID, "btnvehicleAlarm-1") )).click()
+        except exceptions.TimeoutException:
+            pass
+
         time.sleep(1) # wait for page to process information
 
         ## input the address the car is usually kept overnight at
         # inputing postcode + suburb
         Wait.until(EC.element_to_be_clickable( (By.ID, "lnkManualAddress") )).click() # click this button to enter the address manually
         try:
-            driver.find_element(By.ID, "txtAddress-street-number").send_keys(data["Street_number"]) # input the street number
-            driver.find_element(By.ID, "txtAddress-flat-number").send_keys(data["Unit"]) # input the flat number (Unit number)
-            driver.find_element(By.ID, "txtAddress-suburb-city-postcode").send_keys(data["Street_name"]) # input the street name
+            Wait.until(EC.presence_of_element_located((By.ID, "txtAddress-street-number")) ).send_keys(data["Street_number"]) # input the street number
+            Wait.until(EC.presence_of_element_located((By.ID, "txtAddress-flat-number")) ).send_keys(data["Unit"]) # input the flat number (Unit number)
+            Wait.until(EC.presence_of_element_located((By.ID, "txtAddress-suburb-city-postcode")) ).send_keys(data["Street_name"] + ", " + data["Suburb"]) # input the street name and suburb
 
             # find the pop down option with the correct suburb and postcode then select it 
-            Wait.until(EC.element_to_be_clickable( (By.XPATH, f"//ul[@id='txtAddress-suburb-city-postcode-menu-list']/*/div/div[2]/div[contains(text(), '{data["Suburb"]}') and contains(text(), '{data["Postcode"]}')]"))).click()
+            Wait10.until(EC.element_to_be_clickable( (By.XPATH, f"//ul[@id='txtAddress-suburb-city-postcode-menu-list']/*/div/div[2]/div[contains(text(), '{data["Suburb"]}') and contains(text(), '{data["Postcode"]}')]"))).click()
         except exceptions.TimeoutException:
             try:
                 driver.find_element(By.XPATH, f"//ul[@id='txtAddress-suburb-city-postcode-menu-list']/*/div/div[2]/div[contains(text(), '{data["Postcode"]}')]").click() # if the above doesn't work, just select an option with the correct postcode
@@ -1022,7 +1222,7 @@ def tower_auto_scrape_all():
         if data["Sex"] == "MALE":
             first_name = "John"
         else:
-            first_name = "John"
+            first_name = "Jane"
         
         Wait.until(EC.presence_of_element_located( (By.ID, "txtDriver-0-firstName") )).send_keys(first_name)
         Wait.until(EC.presence_of_element_located( (By.ID, "txtDriver-0-lastName") )).send_keys("Doe")
@@ -1033,6 +1233,12 @@ def tower_auto_scrape_all():
         Wait.until(EC.presence_of_element_located( (By.ID, "driverDob-0-month") )).send_keys(data["Birthdate_month"]) # input month
         Wait.until(EC.presence_of_element_located( (By.ID, "driverDob-0-year") )).send_keys(data["Birthdate_year"]) # input year
 
+        try:
+            time.sleep(0.5) # wait for page to load
+            Wait.until_not(EC.presence_of_element_located( (By.ID, "driver-dob-error") )) # checks if the person is old enough for tower to accept insuring them for the given car
+        except: # if the warning is present, then this car/ person combo cannot be insured (the person is 'too yonug' for the given car)
+            print("We will only cover your vehicle when it is being driven by people aged 25 or over", end=" - ")
+            return -1, -1
 
         # select gender of main driver
         if data["Sex"] == "Male":
@@ -1070,18 +1276,24 @@ def tower_auto_scrape_all():
             driver.find_element(By.ID, "btndriverVehicleLoss-0-1").click() # clicks button saying that you have had no incidents
 
         # choose whether to exclude under all under 25 year old drivers from driving the car
-        if data["Exclude_under_25"] == "Yes":\
-            driver.find_element(By.ID, "btnexcludeUnder25-0").click() # clicks yes button for exlcude under 25
-        else: # select 'No'
-            driver.find_element(By.ID, "btnexcludeUnder25-1").click() # clicks no button for exlcude under 25
+        try:
+            if data["Exclude_under_25"] == "Yes":\
+                driver.find_element(By.ID, "btnexcludeUnder25-0").click() # clicks yes button for exlcude under 25
+            else: # select 'No'
+                driver.find_element(By.ID, "btnexcludeUnder25-1").click() # clicks no button for exlcude under 25
+        except:
+            pass
 
-        # accept the privacy policy
-        Wait.until(EC.element_to_be_clickable( (By.ID, "privacyPolicy-label") )).click()
 
+        try:
+            # try to click button 'Next: Customise' to move onto next page
+            Wait.until(EC.element_to_be_clickable( (By.ID, "btnSubmitPage") )).click()
+        except exceptions.TimeoutException:
+            # accept the privacy policy
+            Wait.until(EC.element_to_be_clickable( (By.ID, "privacyPolicy-label") )).click()
 
-        # click button 'Next: Customise' to move onto next page
-        driver.find_element(By.ID, "btnSubmitPage").click()
-
+            # THEN click button 'Next: Customise' to move onto next page
+            Wait.until(EC.element_to_be_clickable( (By.ID, "btnSubmitPage") )).click()
 
         time.sleep(2.5) # wait for page to load
 
@@ -1101,8 +1313,8 @@ def tower_auto_scrape_all():
 
         ## input the amount covered (Agreed Value)
         # scrapes the max and min values
-        min_value = convert_money_str_to_int(driver.find_element(By.XPATH, "//*[@id='agreedValueNew']/div[1]/div[1]/div[2]").text) # get the min agreed value
-        max_value = convert_money_str_to_int(driver.find_element(By.XPATH, "//*[@id='agreedValueNew']/div[1]/div[3]/div[2]").text) # get the max agreed value
+        min_value = convert_money_str_to_int(Wait10.until(EC.presence_of_element_located( (By.XPATH, "//*[@id='agreedValueNew']/div[1]/div[1]/div[2]") )).text) # get the min agreed value
+        max_value = convert_money_str_to_int(Wait10.until(EC.presence_of_element_located( (By.XPATH, "//*[@id='agreedValueNew']/div[1]/div[3]/div[2]") )).text) # get the max agreed value
         
         # check if our attempted agreed value is valid. if not, round up/down to the min/max value
         if data["Agreed_value"] > max_value:
@@ -1144,8 +1356,10 @@ def tower_auto_scrape_all():
             Wait10.until(EC.element_to_be_clickable( (By.ID, "btnaccessoriesOrModifications-0") )).click() # click "Yes" modifications button
             raise Exception("Need to know the combined value of the minor modifications")
         
+
+
         # click 'Next: Summary' button to move onto the summary page
-        next_button = Wait.until(EC.element_to_be_clickable( (By.ID, "btnSubmitPage")))
+        next_button = Wait10.until(EC.element_to_be_clickable( (By.ID, "btnSubmitPage")))
         driver.execute_script("arguments[0].scrollIntoView();", next_button) # scroll down until "Next: Summary" button is on screen (is needed to prevent the click from being intercepted)
         next_button.click() # click 'Next: Summary' button
 
@@ -1165,7 +1379,7 @@ def tower_auto_scrape_all():
     first_time = True
 
     # loop through all cars in test spreadsheet  
-    for person_i in range(4, len(test_auto_data)):
+    for person_i in range(60, len(test_auto_data)): # 51
         start_time = time.time() # get time of start of each iteration
 
         print(person_i, ": ", end = "")
@@ -1198,16 +1412,9 @@ def main():
     # reads in the test data for car insurance inputs
     global test_auto_data
     test_auto_data = pd.read_excel(test_auto_data_xlsx, dtype={"Postcode":"int"})
-    
-    # defines a function to reformat the postcodes in test_auto_data
-    def postcode_reformat(postcode):
-        postcode = str(postcode) # converts the postcode input into a string
-        while len(postcode) != 4:
-            postcode = f"0{postcode}"
-        return postcode
 
     # pads out the front of postcodes with zeroes (as excel removes leading zeros)
-    test_auto_data['Postcode'] = test_auto_data['Postcode'].apply( postcode_reformat ) 
+    test_auto_data['Postcode'] = test_auto_data['Postcode'].apply(postcode_reformat) 
 
     # setup the chromedriver options
     options = webdriver.ChromeOptions()
@@ -1217,13 +1424,13 @@ def main():
     load_webdriver()
 
     # scrape all of the insurance premiums for the given cars from aa
-    #aa_auto_scrape_all()
+    aa_auto_scrape_all()
 
     # scrape all of the insurance premiums for the given cars from ami
     #ami_auto_scrape_all()
 
     # scrape all of the insurance premiums for the given cars from tower
-    tower_auto_scrape_all()
+    #tower_auto_scrape_all()
 
     # Close the browser window
     driver.quit()
