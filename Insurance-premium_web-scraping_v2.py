@@ -61,8 +61,8 @@ def load_webdriver():
 -------------------------
 """
 
-# defining a function that will scrape all of the aa cars
-def aa_auto_scrape_all():
+# defining a function that will scrape the premium for a single car from aa
+def aa_auto_scrape(person_i):
     # defining a function which take the information from the spreadsheet and formats it so it can be used to scrape premium from aa website
     def aa_auto_data_format(person_i):
         # formatting model type
@@ -278,22 +278,24 @@ def aa_auto_scrape_all():
             
             ## choosing the remaining option with the least number of characters
             final_car_variant = car_variant_options[0] # initialising the final variant option to the 1st remaining
-
-            print(f"\n{car_variant_options[0].text}") # print for debugging
+            
+            #print(f"\n{car_variant_options[0].text}") # print for debugging
 
             # iterating through all other options to find one with least number of characters
             for car_variant in car_variant_options[1:]:
 
-                print(car_variant.text) # print out all remaining options, for checking
+                #print(car_variant.text) # print out all remaining options, for checking
 
                 if len(car_variant.text) < len(final_car_variant.text):
                     final_car_variant = car_variant
             
+            '''
             print() # print just a newline character
 
             # printing a message to notify what is happened
             print(f"SELECTED: {final_car_variant.text}. ACTUAL: {data["Vehicle_year"]} {data["Manufacturer"]} {data["Model"]} {data["Model_type"]}" + 
                   f"{data["Model_series"]} with body type {data["Body_type"]} and {data["Num_speeds"]} {data["Automatic"]} and {data["Engine_size"]}L engine", end=" - ")
+            '''
             return final_car_variant
 
         # Open the webpage
@@ -434,7 +436,7 @@ def aa_auto_scrape_all():
         try:
             time.sleep(1) # wait a bit to let the page load
             driver.find_element(By.ID, "address.suburbPostcodeRegionCity").send_keys(data["Postcode"]) # input the postcode
-            time.sleep(5) # wait a bit for the page to load
+            time.sleep(3) # wait a bit for the page to load
             Wait.until(EC.element_to_be_clickable( (By.XPATH, "//*[@id='quote']/fieldset[3]/div[1]/div[1]/ul/li[contains(text(), '{}')]".format(data["Suburb"])) )).click() # find the pop down option with the correct suburb
 
         except exceptions.TimeoutException:
@@ -572,42 +574,31 @@ def aa_auto_scrape_all():
         # returning the monthly/yearly premium
         return monthly_premium, yearly_premium
     
-    # loop through all cars in test spreadsheet
-    for person_i in range(87, len(test_auto_data)): # have tested 0-212
-        start_time = time.time() # get time of start of each iteration
+    
+    # get time of start of each iteration
+    start_time = time.time()
 
-        print(person_i, ": ", end = "")
-        # run on the ith car/person
-        #try:
-        ami_auto_premium = aa_auto_scrape_premium(aa_auto_data_format(person_i))  # scrapes the insurance premium for a single vehicle and person at aa
-        if ami_auto_premium != None: # if an actual result is returned
-            monthly_premium, yearly_premium = ami_auto_premium[0], ami_auto_premium[1]
+    try:
+        # scrapes the insurance premium for a single vehicle and person at aa
+        aa_auto_premium = aa_auto_scrape_premium(aa_auto_data_format(person_i)) 
+        if aa_auto_premium != None: # if an actual result is returned
+            monthly_premium, yearly_premium = aa_auto_premium[0], aa_auto_premium[1]
             print(monthly_premium, yearly_premium, end =" -- ")
-        """
-        except:
-            try: # checks if the reason our code failed is because the 'we need more information' pop up appeareds
-                Wait.until(EC.visibility_of_element_located( (By.XPATH, "//*[@id='ui-id-3' and text() = 'We need more information']") ) )
-                print("Need more information", end= " -- ")
-            except exceptions.TimeoutException:
-                print("Unknown Error!!", end= " -- ")
-        """
-        end_time = time.time() # get time of end of each iteration
-        print("Elapsed time:", round(end_time - start_time,2)) # print out the length of time taken
+    except:
+        try: # checks if the reason our code failed is because the 'we need more information' pop up appeareds
+            Wait.until(EC.visibility_of_element_located( (By.XPATH, "//*[@id='ui-id-3' and text() = 'We need more information']") ) )
+            print("Need more information", end= " -- ")
+        except exceptions.TimeoutException:
+            print("Unknown Error!!", end= " -- ")
 
-        try:
-            # delete all cookies to reset the page
-            driver.delete_all_cookies()
-        except exceptions.TimeoutException: # if we timeout while trying to reset the cookies
-
-            print("New Webdriver window", end=" -- ")
-            driver.quit() # quit this current driver
-            load_webdriver() # open a new webdriver session
+    end_time = time.time() # get time of end of each iteration
+    print("Elapsed time:", round(end_time - start_time,2)) # print out the length of time taken
 
 
 
 
 # defining a function that will scrape all of the ami cars
-def ami_auto_scrape_all():
+def ami_auto_scrape(person_i):
 
     # defining a function which take the information from the spreadsheet and formats it so it can be used to scrape premium from ami website
     def ami_auto_data_format(person_i):
@@ -649,7 +640,15 @@ def ami_auto_scrape_all():
             drivers_license_years = "5 years or more"
         else: # for for generic 'International' (non-NZ) licence
             drivers_license_years = "{} years".format(drivers_license_years)
-
+        
+        # formatting the excess (rounded to the nearest option provided by AA)
+        excess = float(test_auto_data.loc[person_i,'Excess']) # convert into a floating point value (if it is not already one)
+        excess_options = [100, 400, 500, 1000, 2000] # defines a list of the acceptable 
+        # choose the smallest excess option  which is larger than (or equal to) the customers desired excess level
+        excess_index = 0
+        while excess > excess_options[excess_index] and excess_index < 4 : # 4 is the index of the largest option, so should not iterate up further if the index has value 4
+            excess_index += 1
+        excess_index += 1 # add on extra to the value of the excess index (as the option buttons for choosing the excess start at 1, not 0)
         # define a dict to store information for a given person and car for ami
         ami_data = {"Registration_number":test_auto_data.loc[person_i,'Registration'],
                     "Manufacturer":test_auto_data.loc[person_i,'Manufacturer'],
@@ -673,7 +672,9 @@ def ami_auto_scrape_all():
                     "Drivers_license_years":drivers_license_years, # years since driver got their learners licence
                     "Incidents_5_year":test_auto_data.loc[person_i,'Incidents_last5years_AMISTATE'],
                     "NZ_citizen_or_resident":test_auto_data.loc[person_i,'NZ_citizen_or_resident'],
-                    "1_year_Visa":test_auto_data.loc[person_i,'Visa_at_least_1_year']
+                    "1_year_Visa":test_auto_data.loc[person_i,'Visa_at_least_1_year'],
+                    "Agreed_value":test_auto_data.loc[person_i, "AgreedValue"],
+                    "Excess_index":str(excess_index)
                     }
         
         # adding info on the date and type of incident to the ami_data dictionary ONLY if the person has had an incident within the last 5 years
@@ -702,6 +703,8 @@ def ami_auto_scrape_all():
         if not registration_na: # if there is a registration number provided
             Wait10.until(EC.presence_of_element_located((By.ID, "vehicle_searchRegNo")) ).send_keys(data["Registration_number"]) # input registration
             driver.find_element(By.ID, "ie_regSubmitButton").click() # click submit button
+
+            time.sleep(2.5)
 
             # attempt to find the 1st option for car pop down (if present then we can continue)
             try: 
@@ -739,8 +742,8 @@ def ami_auto_scrape_all():
             # inputting car year
             try:
                 Wait.until_not(lambda x: x.find_element(By.ID, "searchByMMYLoading").is_displayed()) # wait until the "loading element" is not being displayed
-                time.sleep(1) 
-                driver.find_element(By.ID, "Year")
+                time.sleep(2) 
+                driver.find_element(By.ID, "Year").click()
                 Wait.until(EC.element_to_be_clickable((By.XPATH, "/html/body/div[6]/div/div[text()='{}']".format(data["Vehicle_year"])))).click() # clicking the button which has the correct car model information
             except exceptions.TimeoutException:
                 print("CANNOT FIND {manufacturer} {model} FROM YEAR {year}".format(year = data["Vehicle_year"], manufacturer = data["Manufacturer"], model = test_auto_data.loc[person_i,'Model']), end=" -- ")
@@ -809,18 +812,19 @@ def ami_auto_scrape_all():
         driver.find_element(By.ID, "garagingAddress_manualStreetNumber").send_keys(data["Street_number"])
         driver.find_element(By.ID, "garagingAddress_manualStreetName").send_keys(data["Street_name"])
         try: # this try block is all just attempting various ways of selecting the final address, either through selecting a pop down from the street, or a pop down from the suburb
-            time.sleep(2) # wait for options list to pop up
+            time.sleep(3) # wait for options list to pop up
             driver.find_element(By.XPATH, "//li[@class='ui-menu-item']//a[contains(text(), '{}') or contains(text(),'{}')]".format(data["Suburb"], data["Postcode"])).click()
         except: # if no pop up after inputting the street address, try inputting the suburb
             suburb_entry_element = driver.find_element(By.ID, "garagingAddress_manualSuburb")
             suburb_entry_element.send_keys(data["Suburb"])
-            time.sleep(1) # wait for elements on the page to load
+            time.sleep(1.5) # wait for elements on the page to load
             try:
                 driver.find_element(By.XPATH, "//li[@class='ui-menu-item']//a[contains(text(), '{}')]".format(data["Postcode"])).click() # try to find and click any pop down element that contains the postcode
             except:
                 try: # try entering just the postcode into the suburb
                     suburb_entry_element.clear() # clears the textbox
                     suburb_entry_element.send_keys(data["Postcode"]) # type into the box just the postcode
+                    time.sleep(1.5)
                     driver.find_element(By.XPATH, "//li[@class='ui-menu-item']//a[contains(text(), '{}')]".format(data["Postcode"])).click() # try to find and click any pop down element that contains the postcode
                 except:
                     driver.find_element(By.ID, "garagingAddress_manualUnitNumber").click() # click this button to get out of "Suburb/Town" element
@@ -873,11 +877,50 @@ def ami_auto_scrape_all():
 
         # click button to get quote 
         Wait.until(EC.element_to_be_clickable((By.ID, "quoteSaveButton"))).click() # wait until button clickable then click
+        
+        ## input the amount covered (Agreed Value)
+        # scrapes the max and min values
+        min_value = convert_money_str_to_int(Wait10.until(EC.presence_of_element_located( (By.XPATH, "//*[@id='slider']/span[1]") )).text) # get the min agreed value
+        max_value = convert_money_str_to_int(Wait10.until(EC.presence_of_element_located( (By.XPATH, "//*[@id='slider']/span[2]") )).text) # get the max agreed value
+        
+        # check if our attempted agreed value is valid. if not, round up/down to the min/max value
+        if data["Agreed_value"] > max_value:
+            data["Agreed_value"] = max_value
+            print("Attempted to input agreed value larger than the maximum", end=" - ")
+        elif data["Agreed_value"] < min_value:
+            data["Agreed_value"] = min_value
+            print("Attempted to input agreed value smaller than the minimum", end=" - ")
 
-        # wait until next page is loaded
-        annual_risk_premium = Wait.until(EC.presence_of_element_located((By.ID, "annualRiskPremium")))
+
+        # inputs the agreed value input the input field (after making sure its valid)
+        agreed_value_input = driver.find_element(By.ID, "agreedValueText") # find the input field for the agreed value
+        agreed_value_input.send_keys(Keys.CONTROL, "a") # select all current value
+        agreed_value_input.send_keys(str(data["Agreed_value"])) # input the desired value, writing over the (selected) current value
+
+        time.sleep(2) # wait for page to load
+
+        # check that the 'something is wrong' popup is not present, if it is closes it
+        try:
+            Wait.until(EC.presence_of_element_located((By.XPATH, "//*[@id='errorRateQuote']/div[2]/div[1]/button")) ).click()
+            print("Clicked x")
+        except exceptions.TimeoutException:
+            pass
+        
+        # input the persons desired level of excess
+        try:
+            # adjusting the excess level (if not present then we can assume that we can't adjust the excess)
+            Wait.until(EC.presence_of_element_located((By.XPATH, f"//*[@id='optionExcessSlider']/span[3]")) ).click()
+
+            time.sleep(7) # wait for page to update the final premiums
+
+        except exceptions.TimeoutException:
+            print("Unchangable excess", end=" -- ")
+
+            time.sleep(3) # wait for page to update the final premiums
 
         # scrape the premium
+        annual_risk_premium = Wait.until(EC.presence_of_element_located((By.ID, "annualRiskPremium")))
+
         monthy_premium = float(driver.find_element(By.ID, "dollars").text.replace(",", "") + driver.find_element(By.ID, "cents").text)
         yearly_premium = float(annual_risk_premium.text.replace(",", "")[1:])
 
@@ -885,39 +928,25 @@ def ami_auto_scrape_all():
         return monthy_premium, yearly_premium
 
 
-    # loop through all cars in test spreadsheet  
-    for person_i in range(0, len(test_auto_data)):
-        start_time = time.time() # get time of start of each iteration
+    # get time of start of each iteration
+    start_time = time.time() 
 
-        print(person_i, ": ", end = "")
-        # run on the ith car/person
-        try:
-            ami_auto_premium = ami_auto_scrape_premium(ami_auto_data_format(person_i))
-            if ami_auto_premium != None: # if an actual result is returned
-                monthly_premium, yearly_premium = ami_auto_premium[0], ami_auto_premium[1]
-                print(monthly_premium, yearly_premium, end =" -- ")
-        except:
-            try: # checks if the reason our code failed is because the 'we need more information' pop up appeareds
-                Wait.until(EC.visibility_of_element_located( (By.XPATH, "//*[@id='ui-id-3' and text() = 'We need more information']") ) )
-                print("Need more information", end= " -- ")
-            except exceptions.TimeoutException:
-                print("Unknown Error!!", end= " -- ")
-
-        end_time = time.time() # get time of end of each iteration
-        print("Elapsed time:", round(end_time - start_time,2)) # print out the length of time taken
-
-        # refresh the page every 100 iterations, to (hopefully) prevent memory overloads
-        if person_i % 100 == 0 and person_i > 0:
-            driver.refresh()
-        
-        try:
-            # delete all cookies to reset the page
-            driver.delete_all_cookies()
-        except exceptions.TimeoutException: # if we timeout while trying to reset the cookies
-
-            print("New Webdriver window", end=" -- ")
-            driver.quit() # quit this current driver
-            load_webdriver() # open a new webdriver session
+    # run on the ith car/person
+    #try:
+    ami_auto_premium = ami_auto_scrape_premium(ami_auto_data_format(person_i))
+    if ami_auto_premium != None: # if an actual result is returned
+        monthly_premium, yearly_premium = ami_auto_premium[0], ami_auto_premium[1]
+        print(monthly_premium, yearly_premium, end =" -- ")
+    '''
+    except:
+        try: # checks if the reason our code failed is because the 'we need more information' pop up appeareds
+            Wait.until(EC.visibility_of_element_located( (By.XPATH, "//*[@id='ui-id-3' and text() = 'We need more information']") ) )
+            print("Need more information", end= " -- ")
+        except exceptions.TimeoutException:
+            print("Unknown Error!!", end= " -- ")
+    '''
+    end_time = time.time() # get time of end of each iteration
+    print("Elapsed time:", round(end_time - start_time,2)) # print out the length of time taken
 
 
 
@@ -1353,7 +1382,7 @@ def state_auto_scrape_all():
 
 
 # defining a function that will scrape all of the tower cars
-def tower_auto_scrape_all():
+def tower_auto_scrape_all(person_i):
 # defining a function which take the information from the spreadsheet and formats it so it can be used to scrape premium from tower website
     def tower_auto_data_format(person_i):
         # saving manufacturer as a variable
@@ -1493,11 +1522,13 @@ def tower_auto_scrape_all():
             print("Cannot click business use button", end=" -- ")
             return None
 
+        '''
         global first_time
         if first_time: 
             first_time = False # the first time has passed
         else:
             Wait.until(EC.presence_of_element_located( (By.ID, "vehicleUsedForBusiness-error-link"))).click()
+        '''
 
         # attempt to input the car registration number (if it both provided and valid)
         try: 
@@ -1826,36 +1857,75 @@ def tower_auto_scrape_all():
         return round(monthly_premium, 2), round(yearly_premium, 2)
 
     # initialise the first time variable
-    global first_time
-    first_time = True
+    #global first_time
+    #first_time = True
 
-    # loop through all cars in test spreadsheet  
-    for person_i in range(65, len(test_auto_data)): # 51
-        start_time = time.time() # get time of start of each iteration
+    start_time = time.time() # get time of start of each iteration
 
-        print(person_i, ": ", end = "")
-        # run on the ith car/person
-        #try:
-        auto_premiums = tower_auto_scrape_premium(tower_auto_data_format(person_i))
-        if auto_premiums != None: # if an actual result is returned
-            monthly_premium, yearly_premium = auto_premiums[0], auto_premiums[1]
-            print(monthly_premium, yearly_premium, end =" -- ")
-        """
-        except:
-            try: # checks if the reason our code failed is because the 'we need more information' pop up appeareds
-                Wait.until(EC.visibility_of_element_located( (By.XPATH, "//*[@id='ui-id-3' and text() = 'We need more information']") ) )
-                print("Need more information", end= " -- ")
-            except exceptions.TimeoutException:
-                #print("Unknown Error!!", end= " -- ")
-                raise Exception("Unknown Error")
-        """
+    print(person_i, ": ", end = "")
+    # run on the ith car/person
+    #try:
+    auto_premiums = tower_auto_scrape_premium(tower_auto_data_format(person_i))
+    if auto_premiums != None: # if an actual result is returned
+        monthly_premium, yearly_premium = auto_premiums[0], auto_premiums[1]
+        print(monthly_premium, yearly_premium, end =" -- ")
+    """
+    except:
+        try: # checks if the reason our code failed is because the 'we need more information' pop up appeareds
+            Wait.until(EC.visibility_of_element_located( (By.XPATH, "//*[@id='ui-id-3' and text() = 'We need more information']") ) )
+            print("Need more information", end= " -- ")
+        except exceptions.TimeoutException:
+            #print("Unknown Error!!", end= " -- ")
+            raise Exception("Unknown Error")
+    """
 
-        end_time = time.time() # get time of end of each iteration
-        print("Elapsed time:", round(end_time - start_time,2)) # print out the length of time taken
+    end_time = time.time() # get time of end of each iteration
+    print("Elapsed time:", round(end_time - start_time,2)) # print out the length of time taken
 
-        # delete all cookies to reset the page
-        driver.delete_all_cookies()
-        
+    # delete all cookies to reset the page
+    driver.delete_all_cookies()
+
+
+
+
+def auto_scape_all():
+    # save the number of cars in the dataset as a variable
+    num_cars = len(test_auto_data)
+
+    # define a list of insurance companies to iterate through
+    insurance_companies = ["AMI"]
+
+    # estimate the number of seconds testing all cars on each company website will take
+    approximate_total_times = [(time * num_cars) for time in [45, 35]]
+    total_time_hours = sum(approximate_total_times) / 3600 # convert seconds to hours
+    total_time_minutes = round((total_time_hours - int(total_time_hours)) * 60)
+    total_time_hours = math.floor(total_time_hours)
+
+    print(f"Program will take approximately {total_time_hours} hours and {total_time_minutes} minutes to scrape the premiums for {num_cars} cars for AA and AMI", end="\n\n\n")
+
+    # loop through all cars in test spreadsheet
+    for person_i in range(18, num_cars): 
+
+        # iterate through all the different insurance providers
+        for company in insurance_companies:
+
+            print(f"{person_i}: {company}: ", end = "")
+
+            # run on the ith car/person for the given company
+            if company == "AA":
+                aa_auto_scrape(person_i)
+            elif company == "AMI":
+                ami_auto_scrape(person_i)
+
+
+        try:
+            # delete all cookies to reset the page
+            driver.delete_all_cookies()
+        except exceptions.TimeoutException: # if we timeout while trying to reset the cookies
+
+            print("\n\nNew Webdriver window\n")
+            driver.quit() # quit this current driver
+            load_webdriver() # open a new webdriver session
 
 
 
@@ -1875,16 +1945,7 @@ def main():
     load_webdriver()
 
     # scrape all of the insurance premiums for the given cars from aa
-    #aa_auto_scrape_all()
-
-    # scrape all of the insurance premiums for the given cars from ami
-    #ami_auto_scrape_all()
-
-    # scrape all of the insurance premiums for the given cars from state
-    #state_auto_scrape_all()
-
-    # scrape all of the insurance premiums for the given cars from tower
-    tower_auto_scrape_all()
+    auto_scape_all()
 
     # Close the browser window
     driver.quit()
