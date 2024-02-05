@@ -877,7 +877,15 @@ def ami_auto_scrape(person_i):
 
         # click button to get quote 
         Wait.until(EC.element_to_be_clickable((By.ID, "quoteSaveButton"))).click() # wait until button clickable then click
-        
+
+        # check to see if the "Need more information" popup appears. If it does, then exit
+        try:
+            Wait.until(EC.element_to_be_clickable((By.XPATH, '//*[@id="getQuoteError153"]/div[2]/div[1]/button/span[1]')))
+            print("Need more information!")
+            return None
+        except exceptions.TimeoutException:
+            pass
+
         ## input the amount covered (Agreed Value)
         # scrapes the max and min values
         min_value = convert_money_str_to_int(Wait10.until(EC.presence_of_element_located( (By.XPATH, "//*[@id='slider']/span[1]") )).text) # get the min agreed value
@@ -1904,7 +1912,7 @@ def auto_scape_all():
     print(f"Program will take approximately {total_time_hours} hours and {total_time_minutes} minutes to scrape the premiums for {num_cars} cars for AA and AMI", end="\n\n\n")
 
     # loop through all cars in test spreadsheet
-    for person_i in range(18, num_cars): 
+    for person_i in range(19, num_cars): 
 
         # iterate through all the different insurance providers
         for company in insurance_companies:
