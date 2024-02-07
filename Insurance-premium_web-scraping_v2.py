@@ -15,18 +15,33 @@ import pandas as pd
 from datetime import datetime
 import math
 import re
+import os
 
-# File path definitions
-test_auto_data_xlsx = "C:\\Users\\samuel.johnston\\Documents\\Insurance_web-scraping\\test_auto_data1.xlsx" # for at work
-#test_auto_data_xlsx = "D:\\Documents\\Coding_projects\\Insurance_premium\\test_auto_data1.xlsx" # for at home
-#test_home_data_xlsx
+
+## setting the working directory to be the folder this file is located in
+# Get the absolute path of the current Python file
+file_path = os.path.abspath(__file__)
+
+# Get the directory of the current Python file
+file_directory = os.path.dirname(file_path)
+
+# Set the current working directory to be the directory of the Python file
+os.chdir(file_directory)
+
+## File path definitions
+test_auto_data_xlsx = f"{file_directory}\\test_auto_data1.xlsx" # defines the path to the input dataset
+
 
 """
 -------------------------
 Useful functions
 """
+def export_auto_dataset(num_datalines_to_export = len(test_auto_data_xlsx)):
+    auto_dataset_for_export = test_auto_data.head(num_datalines_to_export) # get the given number of lines from the start
+    auto_dataset_for_export.to_csv("scraped_auto_premium.csv", index=False)
+
 def remove_non_numeric(string):
-    return ''.join(char for char in string if char.isdigit())
+    return ''.join(char for char in string if (char.isdigit() or char == "."))
 
 # defines a function to reformat the postcodes in test_auto_data
 def postcode_reformat(postcode):
@@ -36,7 +51,8 @@ def postcode_reformat(postcode):
     return postcode
 
 def convert_money_str_to_int(money_string, cents = False):
-    money_string = money_string.replace("$", "").replace(",","")
+    money_string = re.sub(r'\(.*?\)', '', money_string) # deletes all characters that are in between brackets (needed for tower as its annual payment includes '(save $88.37)' or other equivalent numbers)
+    money_string = remove_non_numeric(money_string)
     if cents:
         return float(money_string)
     else:
@@ -44,7 +60,7 @@ def convert_money_str_to_int(money_string, cents = False):
     
 def load_webdriver():
     # loads chromedriver
-    global driver # defines driver as a global variable
+    global driver # defines driver as a global variableaa
     driver = webdriver.Chrome(service=Service(ChromeDriverManager().install()))
 
     # define the implicit wait time for the session
@@ -204,6 +220,7 @@ def aa_auto_scrape(person_i):
                     "Excess_index":excess_index
                     }
         
+        
         # adding info on the date and type of incident to the ami_data dictionary ONLY if the person has had an incident within the last 5 years
         incident_date = test_auto_data.loc[person_i,'Date_of_incident']
         if aa_data["Incidents_3_year"] == 1:
@@ -289,13 +306,13 @@ def aa_auto_scrape(person_i):
                 if len(car_variant.text) < len(final_car_variant.text):
                     final_car_variant = car_variant
             
-            '''
+            """
             print() # print just a newline character
 
             # printing a message to notify what is happened
             print(f"SELECTED: {final_car_variant.text}. ACTUAL: {data["Vehicle_year"]} {data["Manufacturer"]} {data["Model"]} {data["Model_type"]}" + 
                   f"{data["Model_series"]} with body type {data["Body_type"]} and {data["Num_speeds"]} {data["Automatic"]} and {data["Engine_size"]}L engine", end=" - ")
-            '''
+            """
             return final_car_variant
 
         # Open the webpage
@@ -545,11 +562,14 @@ def aa_auto_scrape(person_i):
 
             if int(data["Agreed_value"]) > limits[1]: # if the entered agreed value is greater than the maximum value aa allows
                 agreed_value_input.send_keys(limits[1]) # input the maximum allowed value
+                adjusted_agreed_value = limits[1] # save the new 'adjusted agreed value'
+                print("Attempted to input agreed value larger than the maximum", end=" - ")
 
             elif int(data["Agreed_value"]) < limits[0]: # if the entered agreed value is smaller than the minimum value aa allows
                 agreed_value_input.send_keys(limits[0]) # input the minimum allowed value
+                adjusted_agreed_value = limits[0] # save the new 'adjusted agreed value'
+                print("Attempted to input agreed value smaller than the minimum", end=" - ")
 
-            print("MODIFIED AGREED VALUE", end=" - ")
         except exceptions.TimeoutException:
             pass
         
@@ -571,9 +591,11 @@ def aa_auto_scrape(person_i):
         # reformatting the montly and yearly premiums into integers
         monthly_premium, yearly_premium = convert_money_str_to_int(monthly_premium, cents=True), convert_money_str_to_int(yearly_premium, cents=True)
 
-        # returning the monthly/yearly premium
-        return monthly_premium, yearly_premium
-    
+        # returning the monthly/yearly premium and the adjusted agreed value
+        try:
+            return monthly_premium, yearly_premium, adjusted_agreed_value
+        except UnboundLocalError: # if no value saved for adjusted_agreed value, then just return None for it
+            return monthly_premium, yearly_premium, None
     
     # get time of start of each iteration
     start_time = time.time()
@@ -582,17 +604,24 @@ def aa_auto_scrape(person_i):
         # scrapes the insurance premium for a single vehicle and person at aa
         aa_auto_premium = aa_auto_scrape_premium(aa_auto_data_format(person_i)) 
         if aa_auto_premium != None: # if an actual result is returned
-            monthly_premium, yearly_premium = aa_auto_premium[0], aa_auto_premium[1]
+            monthly_premium, yearly_premium, adjusted_agreed_value = aa_auto_premium[0], aa_auto_premium[1], aa_auto_premium[2]
             print(monthly_premium, yearly_premium, end =" -- ")
+
     except:
-        try: # checks if the reason our code failed is because the 'we need more information' pop up appeareds
-            Wait.until(EC.visibility_of_element_located( (By.XPATH, "//*[@id='ui-id-3' and text() = 'We need more information']") ) )
-            print("Need more information", end= " -- ")
-        except exceptions.TimeoutException:
-            print("Unknown Error!!", end= " -- ")
+        #try: # checks if the reason our code failed is because the 'we need more information' pop up appeareds
+        Wait.until(EC.visibility_of_element_located( (By.XPATH, "//*[@id='ui-id-3' and text() = 'We need more information']") ) )
+        print("Need more information", end= " -- ")
+        #except exceptions.TimeoutException:
+        #    print("Unknown Error!!", end= " -- ")
 
     end_time = time.time() # get time of end of each iteration
     print("Elapsed time:", round(end_time - start_time,2)) # print out the length of time taken
+
+    # returning the adjusted agreed value
+    try:
+        return adjusted_agreed_value, monthly_premium, yearly_premium
+    except UnboundLocalError: # if no value saved for adjusted_agreed value, then just return None
+        return None
 
 
 
@@ -817,14 +846,14 @@ def ami_auto_scrape(person_i):
         except: # if no pop up after inputting the street address, try inputting the suburb
             suburb_entry_element = driver.find_element(By.ID, "garagingAddress_manualSuburb")
             suburb_entry_element.send_keys(data["Suburb"])
-            time.sleep(1.5) # wait for elements on the page to load
+            time.sleep(2) # wait for elements on the page to load
             try:
-                driver.find_element(By.XPATH, "//li[@class='ui-menu-item']//a[contains(text(), '{}')]".format(data["Postcode"])).click() # try to find and click any pop down element that contains the postcode
-            except:
+                Wait.until(EC.element_to_be_clickable((By.XPATH, "//li[@class='ui-menu-item']//a[contains(text(), '{}')]".format(data["Postcode"]) )) ).click() # try to find and click any pop down element that contains the postcode
+            except exceptions.TimeoutException:
                 try: # try entering just the postcode into the suburb
                     suburb_entry_element.clear() # clears the textbox
                     suburb_entry_element.send_keys(data["Postcode"]) # type into the box just the postcode
-                    time.sleep(1.5)
+                    time.sleep(2)
                     driver.find_element(By.XPATH, "//li[@class='ui-menu-item']//a[contains(text(), '{}')]".format(data["Postcode"])).click() # try to find and click any pop down element that contains the postcode
                 except:
                     driver.find_element(By.ID, "garagingAddress_manualUnitNumber").click() # click this button to get out of "Suburb/Town" element
@@ -894,9 +923,11 @@ def ami_auto_scrape(person_i):
         # check if our attempted agreed value is valid. if not, round up/down to the min/max value
         if data["Agreed_value"] > max_value:
             data["Agreed_value"] = max_value
+            adjusted_agreed_value = max_value
             print("Attempted to input agreed value larger than the maximum", end=" - ")
         elif data["Agreed_value"] < min_value:
             data["Agreed_value"] = min_value
+            adjusted_agreed_value = min_value
             print("Attempted to input agreed value smaller than the minimum", end=" - ")
 
 
@@ -929,32 +960,40 @@ def ami_auto_scrape(person_i):
         # scrape the premium
         annual_risk_premium = Wait.until(EC.presence_of_element_located((By.ID, "annualRiskPremium")))
 
-        monthy_premium = float(driver.find_element(By.ID, "dollars").text.replace(",", "") + driver.find_element(By.ID, "cents").text)
+        monthly_premium = float(driver.find_element(By.ID, "dollars").text.replace(",", "") + driver.find_element(By.ID, "cents").text)
         yearly_premium = float(annual_risk_premium.text.replace(",", "")[1:])
 
         # return the scraped premiums
-        return monthy_premium, yearly_premium
+        try:
+            return monthly_premium, yearly_premium, adjusted_agreed_value
+        except UnboundLocalError: # if no value saved for adjusted_agreed value, then just return None for it
+            return monthly_premium, yearly_premium, None
 
 
     # get time of start of each iteration
     start_time = time.time() 
 
     # run on the ith car/person
-    #try:
-    ami_auto_premium = ami_auto_scrape_premium(ami_auto_data_format(person_i))
-    if ami_auto_premium != None: # if an actual result is returned
-        monthly_premium, yearly_premium = ami_auto_premium[0], ami_auto_premium[1]
-        print(monthly_premium, yearly_premium, end =" -- ")
-    '''
+    try:
+        ami_auto_premium = ami_auto_scrape_premium(ami_auto_data_format(person_i))
+        if ami_auto_premium != None: # if an actual result is returned
+            monthly_premium, yearly_premium, adjusted_agreed_value = ami_auto_premium[0], ami_auto_premium[1], ami_auto_premium[2]
+            print(monthly_premium, yearly_premium, end =" -- ")
     except:
-        try: # checks if the reason our code failed is because the 'we need more information' pop up appeareds
-            Wait.until(EC.visibility_of_element_located( (By.XPATH, "//*[@id='ui-id-3' and text() = 'We need more information']") ) )
-            print("Need more information", end= " -- ")
-        except exceptions.TimeoutException:
-            print("Unknown Error!!", end= " -- ")
-    '''
+        #try: # checks if the reason our code failed is because the 'we need more information' pop up appeareds
+        Wait.until(EC.visibility_of_element_located( (By.XPATH, "//*[@id='ui-id-3' and text() = 'We need more information']") ) )
+        print("Need more information", end= " -- ")
+        #except exceptions.TimeoutException:
+        #    print("Unknown Error!!", end= " -- ")
+
     end_time = time.time() # get time of end of each iteration
     print("Elapsed time:", round(end_time - start_time,2)) # print out the length of time taken
+
+    # returning the adjusted agreed value
+    try:
+        return adjusted_agreed_value, monthly_premium, yearly_premium
+    except UnboundLocalError: # if no value saved for adjusted_agreed value, then just return None
+        return None
 
 
 
@@ -1054,7 +1093,7 @@ def state_auto_scrape_all():
             else:
                 print("Can't choose option!")
                 time.sleep(10000)
-            '''
+            """
             # define the specifications list, in the order that we want to use them to filter out incorrect car variant options
             specifications_list = ["Model_type", "Model_series", "Engine_size", "Num_speeds", "Transmission"]
 
@@ -1103,7 +1142,7 @@ def state_auto_scrape_all():
             print(f"SELECTED: {final_car_variant.text}. ACTUAL: {data["Vehicle_year"]} {data["Manufacturer"]} {data["Model"]} {data["Model_type"]}" + 
                   f"{data["Model_series"]} with body type {data["Body_type"]} and {data["Num_speeds"]} {data["Automatic"]} and {data["Engine_size"]}L engine", end=" - ")
             return final_car_variant
-            '''
+            """
 
         # internal function to select the correct address
         def select_correct_address():
@@ -1297,7 +1336,7 @@ def state_auto_scrape_all():
         # enter drivers licence info
         Select(driver.find_element(By.ID, "licenseId_driver1")).select_by_visible_text(data["Drivers_license_type"]) # select the correct drivers license type
 
-        '''
+        """
         if "International" in data["Drivers_license_type"]: # if international licence
             if data["NZ_citizen_or_resident"] == "Yes": # is the person NZ citizen/ perm resident
                 driver.find_element(By.ID, 'prOrCitizen_1').click()
@@ -1307,7 +1346,7 @@ def state_auto_scrape_all():
                     driver.find_element(By.ID, 'validVisa_1').click()
                 else:
                     driver.find_element(By.ID, 'notValidVisa_1').click()
-        '''
+        """
 
         driver.find_element(By.ID, "licenseAgeId_driver1").send_keys(str(data["Age_learners"]))  # input age the person got their learners
 
@@ -1318,14 +1357,14 @@ def state_auto_scrape_all():
 
             driver.find_element(By.ID, "incidentsYesLabelId_driver1").click() # opens incident type option box
             raise Exception("Incidents issue")
-            '''
+            """
             driver.find_element(By.XPATH, "//div[text()='{}']".format(data["Incident_type"])).click() # selects the driver incident type
 
             driver.find_element(By.ID, "DriverIncidentMonth_1").click() # opens incident month option box
             driver.find_element(By.XPATH, "//html//body//div[15]//div//div[text()='{}']".format(data["Incident_date_month"])).click() # selects the driver incident type
             driver.find_element(By.ID, "DriverIncidentYear_1").click() # opens incident year option box
             driver.find_element(By.XPATH, "//html//body//div[16]//div[text()='{}']".format(data["Incident_date_year"])).click() # selects the driver incident type
-            '''
+            """
         else:
             driver.find_element(By.ID, "incidentsNoLabelId_driver1").click() # clicks button saying that you have had no incidents
 
@@ -1361,14 +1400,14 @@ def state_auto_scrape_all():
         if ami_auto_premium != None: # if an actual result is returned
             monthly_premium, yearly_premium = ami_auto_premium[0], ami_auto_premium[1]
             print(monthly_premium, yearly_premium, end =" -- ")
-        '''
+        """
         except:
             try: # checks if the reason our code failed is because the 'we need more information' pop up appeareds
                 Wait.until(EC.visibility_of_element_located( (By.XPATH, "//*[@id='ui-id-3' and text() = 'We need more information']") ) )
                 print("Need more information", end= " -- ")
             except exceptions.TimeoutException:
                 print("Unknown Error!!", end= " -- ")
-        '''
+        """
 
         end_time = time.time() # get time of end of each iteration
         print("Elapsed time:", round(end_time - start_time,2)) # print out the length of time taken
@@ -1390,7 +1429,7 @@ def state_auto_scrape_all():
 
 
 # defining a function that will scrape all of the tower cars
-def tower_auto_scrape_all(person_i):
+def tower_auto_scrape(person_i):
 # defining a function which take the information from the spreadsheet and formats it so it can be used to scrape premium from tower website
     def tower_auto_data_format(person_i):
         # saving manufacturer as a variable
@@ -1458,6 +1497,9 @@ def tower_auto_scrape_all(person_i):
         while excess > excess_options[excess_index] and excess_index < 3: # 3 is the index of the largest option, so should not iterate up further if the index has value 3
             excess_index += 1
 
+        # formatting the policy start date
+        policy_start_date = datetime.strftime(test_auto_data.loc[person_i, "PolicyStartDate"], "%d/%m/%Y") # ensure that the date is in the correct format 'DD/MM/YYYY'
+
         # define a dict to store information for a given person and car for ami
         tower_data = {"Registration_number":test_auto_data.loc[person_i,'Registration'],
                     "Manufacturer":manufacturer,
@@ -1484,7 +1526,9 @@ def tower_auto_scrape_all(person_i):
                     "Agreed_value":int(round(test_auto_data.loc[person_i,'AgreedValue'])), # rounds the value to nearest whole number then converts to an integer
                     "Excess_index":excess_index,
                     "Modifications":test_auto_data.loc[person_i,'Modifications'],
-                    "Immobiliser":test_auto_data.loc[person_i,'Immobiliser_alarm']
+                    "Immobiliser":test_auto_data.loc[person_i,'Immobiliser_alarm'], 
+                    "Finance_purchase":test_auto_data.loc[person_i,'FinancePurchase'],
+                    "Policy_start_date":str(policy_start_date)
                     }
         
         # adding info on the date and type of incident to the ami_data dictionary ONLY if the person has had an incident within the last 5 years
@@ -1530,13 +1574,12 @@ def tower_auto_scrape_all(person_i):
             print("Cannot click business use button", end=" -- ")
             return None
 
-        '''
-        global first_time
-        if first_time: 
-            first_time = False # the first time has passed
-        else:
+        # clicks the button to reset the input data (need to do this everytime except first time, as the page 'remebers' the previous iteration)
+        try:
             Wait.until(EC.presence_of_element_located( (By.ID, "vehicleUsedForBusiness-error-link"))).click()
-        '''
+        except exceptions.TimeoutException:
+            pass
+
 
         # attempt to input the car registration number (if it both provided and valid)
         try: 
@@ -1589,6 +1632,8 @@ def tower_auto_scrape_all(person_i):
 
         except ValueError: # if the registration is invalid or not provided, then need to enter car details manually
             
+            time.sleep(1) # wait for page to load
+
             # Find the button "Enter your car's details" and click it
             if pd.isna(data["Registration_number"]): # only if registration NA do we need to click the button (if the plate number is just invalid, then the drop down automatically opens, so dont need to click this button)
                 Wait.until(EC.element_to_be_clickable( (By.ID, "lnkEnterMakeModel") )).click()
@@ -1809,9 +1854,11 @@ def tower_auto_scrape_all(person_i):
         # check if our attempted agreed value is valid. if not, round up/down to the min/max value
         if data["Agreed_value"] > max_value:
             data["Agreed_value"] = max_value
+            adjusted_agreed_value = max_value # saves the adjusted agreed value to return later
             print("Attempted to input agreed value larger than the maximum", end=" - ")
         elif data["Agreed_value"] < min_value:
             data["Agreed_value"] = min_value
+            adjusted_agreed_value = min_value # saves the adjusted agreed value to return later
             print("Attempted to input agreed value smaller than the minimum", end=" - ")
 
 
@@ -1853,88 +1900,200 @@ def tower_auto_scrape_all(person_i):
         driver.execute_script("arguments[0].scrollIntoView();", next_button) # scroll down until "Next: Summary" button is on screen (is needed to prevent the click from being intercepted)
         next_button.click() # click 'Next: Summary' button
 
-        time.sleep(3) # wait for the page to load
+        time.sleep(4) # wait for the page to load
 
-        # scrape the fortnightly insurance premium
-        fortnightly_premium = convert_money_str_to_int(Wait10.until(EC.presence_of_element_located( (By.XPATH, "//*[@id='QuoteSummary']/div[1]/div[1]/form/div[1]/div/div[2]/div[1]/div/div/h4"))).text, cents=True)
+        # move onto the next page "People"
+        Wait.until(EC.element_to_be_clickable((By.ID, "btnSubmitPage"))).click()
 
-        # convert into monthly and yearly premiums
-        monthly_premium = fortnightly_premium * 2.173
-        yearly_premium = monthly_premium * 12
+        time.sleep(3) # wait for page to load    
+    
+        # if a pop telling us 'an additional excess of ... will apply to claims of theft for this vehicle' appears, close it
+        try:
+            Wait.until(EC.element_to_be_clickable((By.ID, "btnClose"))).click()
+        except exceptions.TimeoutException: # if the popup not present then continue
+            pass
 
-        return round(monthly_premium, 2), round(yearly_premium, 2)
+        # click button to say that the driver has NOT "had their licence suspended or cancelled or had a special condition imposed"
+        Wait10.until(EC.element_to_be_clickable((By.ID, "btndriver-0-licence-cancelled-1"))).click()
 
-    # initialise the first time variable
-    #global first_time
-    #first_time = True
+        # click button to say that the policy will NOT be held by a business or trust
+        Wait.until(EC.element_to_be_clickable((By.ID, "btnownedByBusinessOrTrust-1"))).click()
+
+        # enter email address
+        email_address = f"{first_name}.Doe@email.com"
+        Wait.until(EC.presence_of_element_located((By.ID, "txtDriver-0-email"))).send_keys(email_address)
+
+        # enter phone number
+        Wait.until(EC.presence_of_element_located((By.ID, "txtDriver-0-phoneNumbers-0"))).send_keys("022 123 456")
+
+        # click button to go to next page 'Legal'
+        Wait.until(EC.element_to_be_clickable((By.ID, "btnSubmitPage"))).click()
+
+        # click button to say I understand the 1st legal information declaration (the 'Yes' button)
+        Wait10.until(EC.element_to_be_clickable((By.ID, "btnlegalDeclaration-0"))).click()
+
+        # click button to say I understand the 2nd legal information (important things to call out) declaration (the 'Yes' button)
+        Wait.until(EC.element_to_be_clickable((By.ID, "btnexclusions-0"))).click()
+
+        # click button to say I haven't had insurance refused or cancelled within the last 7 years (the 'No' button)
+        Wait.until(EC.element_to_be_clickable((By.ID, "btninsuranceHistory-1"))).click()
+
+        # click button to say I haven't had a claim declined or policy avoided in the last 7 years (the 'No' button)
+        Wait.until(EC.element_to_be_clickable((By.ID, "btnclaimsDeclined-1"))).click()
+
+        # click button to say I have not been convicted of Fraud, Arson, Bugulary, Wilfull damage, sexual offences, or drugs conviction within the last 7 years (the 'No' button)
+        Wait.until(EC.element_to_be_clickable((By.ID, "btncriminalHistory-1"))).click()
+
+        # select whether the car was purchased on finance
+        if data["Finance_purchase"].upper() == "NO":
+            Wait10.until(EC.element_to_be_clickable( (By.ID, "btnmoneyOwed-1") )).click() # click "No" Finance" button
+        else:
+            Wait10.until(EC.element_to_be_clickable( (By.ID, "btnmoneyOwed-0") )).click() # click "Yes" Finance" button
+            Wait.until(EC.presence_of_element_located((By.ID, "financialInterestedParty-0-financialInterestedParty-financial-institution-search"))).send_keys("Kiwibank") # enter the finance provider as kiwibank
+            Wait.until(EC.element_to_be_clickable((By.XPATH, '//ul[@id="financialInterestedParty-0-financialInterestedParty-financial-institution-search-menu-list"]/li'))).click() # select 'Kiwibank Limited' as finance provider
+
+        # click button to go to the next page 'Finalise'
+        Wait.until(EC.element_to_be_clickable((By.ID, "btnSubmitPage"))).click()
+
+        # click button to say the person would not like to link an airpoints account (Click 'No' button)
+        Wait.until(EC.element_to_be_clickable((By.ID, "btnairpointsIsMember-1"))).click()
+
+        # input the desired start date
+        start_date_input_element = Wait.until(EC.presence_of_element_located((By.ID, "policyStartDatePicker")))
+        start_date_input_element.send_keys(Keys.CONTROL + "a")
+        start_date_input_element.send_keys(data["Policy_start_date"])
+
+        # click button to move to next page ('Payment')
+        Wait10.until(EC.element_to_be_clickable((By.ID, "btnSubmitPage"))).click()
+
+        # scrape the monthly and yearly premiums
+        monthly_premium = convert_money_str_to_int(Wait10.until(EC.presence_of_element_located( (By.ID, "btnpaymentFrequency-1"))).text, cents=True) # scrape the monthy premium and convert into an integer
+        yearly_premium = convert_money_str_to_int(Wait10.until(EC.presence_of_element_located( (By.ID, "btnpaymentFrequency-2"))).text, cents=True) # scrape the yearly premium and convert into an integer
+
+
+        # return the scraped premiums
+        try:
+            return round(monthly_premium, 2), round(yearly_premium, 2), adjusted_agreed_value
+        except UnboundLocalError: # if no value saved for adjusted_agreed value, then just return None for it
+            return round(monthly_premium, 2), round(yearly_premium, 2), None
+
 
     start_time = time.time() # get time of start of each iteration
 
-    print(person_i, ": ", end = "")
     # run on the ith car/person
-    #try:
-    auto_premiums = tower_auto_scrape_premium(tower_auto_data_format(person_i))
-    if auto_premiums != None: # if an actual result is returned
-        monthly_premium, yearly_premium = auto_premiums[0], auto_premiums[1]
-        print(monthly_premium, yearly_premium, end =" -- ")
-    """
+    try:
+        auto_premiums = tower_auto_scrape_premium(tower_auto_data_format(person_i))
+        if auto_premiums != None: # if an actual result is returned
+            monthly_premium, yearly_premium, adjusted_agreed_value = auto_premiums[0], auto_premiums[1], auto_premiums[2]
+            print(monthly_premium, yearly_premium, end =" -- ")
     except:
-        try: # checks if the reason our code failed is because the 'we need more information' pop up appeareds
-            Wait.until(EC.visibility_of_element_located( (By.XPATH, "//*[@id='ui-id-3' and text() = 'We need more information']") ) )
-            print("Need more information", end= " -- ")
-        except exceptions.TimeoutException:
+        #try: # checks if the reason our code failed is because the 'we need more information' pop up appeareds
+        Wait.until(EC.visibility_of_element_located( (By.XPATH, "//*[@id='ui-id-3' and text() = 'We need more information']") ) )
+        print("Need more information", end= " -- ")
+        #except exceptions.TimeoutException:
             #print("Unknown Error!!", end= " -- ")
-            raise Exception("Unknown Error")
-    """
+        #    raise Exception("Unknown Error")
+
 
     end_time = time.time() # get time of end of each iteration
     print("Elapsed time:", round(end_time - start_time,2)) # print out the length of time taken
 
-    # delete all cookies to reset the page
-    driver.delete_all_cookies()
+        # returning the adjusted agreed value
+    try:
+        return adjusted_agreed_value, monthly_premium, yearly_premium
+    except UnboundLocalError: # if no value saved for adjusted_agreed value, then just return None
+        return None
+    
 
 
 
 
 def auto_scape_all():
+    # run the scraper for person_i on the given company website
+    def run_company_scrapers(person_i, company):
+        
+        print(f"{person_i}: {company}: ", end = "")
+
+        # run on the ith car/person for the given company
+        if company == "AA":
+            adjusted_agreed_value, monthly_premium, yearly_premium = aa_auto_scrape(person_i)
+        elif company == "AMI":
+            adjusted_agreed_value, monthly_premium, yearly_premium = ami_auto_scrape(person_i)
+        elif company == "Tower":
+            adjusted_agreed_value, monthly_premium, yearly_premium = tower_auto_scrape(person_i)
+        
+        # save the scraped monthly and yearly premiums to the test_auto_data pandas dataframe
+        test_auto_data.loc[person_i, f"{company}_monthly_premium"], test_auto_data.loc[person_i, f"{company}_yearly_premium"] = monthly_premium, yearly_premium
+        
+        
+        return adjusted_agreed_value
+    
+    # save the adjusted agreed value in the spreadsheet (so that all companies are using the same agreed value)
+    def save_adjusted_agreed_value(insurance_companies, current_company, adjusted_agreed_value, person_i):
+        # save the adjusted agreed value
+        global test_auto_data
+        test_auto_data.loc[person_i,'AgreedValue'] = adjusted_agreed_value
+
+        # iterate through all previous companies using this new adjusted agreed value for person_i
+        for company in insurance_companies:
+
+            # stop once we have iterated through all previous companies
+            if company == current_company:
+                return
+            else:
+                adjusted_agreed_value = run_company_scrapers(person_i, company)
+
+                if adjusted_agreed_value != None:
+                    save_adjusted_agreed_value(insurance_companies, company, adjusted_agreed_value, person_i)
+
+    # reformats the dataset to add columns to store the scraped insurance premiums
+    def reformat_test_auto_data(insurance_companies, num_cars = len(test_auto_data)):
+        # add a new column 'Company_monthly_premium' and Company_yearly_premium' for each company in insurance companies
+        for company in insurance_companies:
+            global test_auto_data
+            test_auto_data[f"{company}_monthly_premium"] = [None] * num_cars
+            test_auto_data[f"{company}_yearly_premium"] = [None] * num_cars
+
     # save the number of cars in the dataset as a variable
-    num_cars = len(test_auto_data)
+    #num_cars = len(test_auto_data)
+    num_cars = 1
 
     # define a list of insurance companies to iterate through
-    insurance_companies = ["AMI"]
+    insurance_companies = ["AA", "AMI", "Tower"]
+    
+    reformat_test_auto_data(insurance_companies)
 
     # estimate the number of seconds testing all cars on each company website will take
-    approximate_total_times = [(time * num_cars) for time in [45, 35]]
+    approximate_total_times = [(time * num_cars) for time in [50, 40, 65]]
     total_time_hours = sum(approximate_total_times) / 3600 # convert seconds to hours
     total_time_minutes = round((total_time_hours - int(total_time_hours)) * 60)
     total_time_hours = math.floor(total_time_hours)
 
-    print(f"Program will take approximately {total_time_hours} hours and {total_time_minutes} minutes to scrape the premiums for {num_cars} cars for AA and AMI", end="\n\n\n")
+    print(f"Program will take approximately {total_time_hours} hours and {total_time_minutes} minutes to scrape the premiums for {num_cars} cars for AA, AMI and Tower", end="\n\n\n")
 
     # loop through all cars in test spreadsheet
-    for person_i in range(19, num_cars): 
+    for person_i in range(0, num_cars): 
 
         # iterate through all the different insurance providers
         for company in insurance_companies:
 
-            print(f"{person_i}: {company}: ", end = "")
+            # run the scraper for person_i on the given company website
+            adjusted_agreed_value = run_company_scrapers(person_i, company)
 
-            # run on the ith car/person for the given company
-            if company == "AA":
-                aa_auto_scrape(person_i)
-            elif company == "AMI":
-                ami_auto_scrape(person_i)
+            # if the agreed value was adjusted to work with this company (if the agreed value was larger/ smaller than the upper/ lower accepted limits)
+            if adjusted_agreed_value != None: 
+                save_adjusted_agreed_value(insurance_companies, company, adjusted_agreed_value, person_i) # save the adjusted agreed value in the spreadsheet (so that all companies are using the same agreed value)
 
-
-        try:
             # delete all cookies to reset the page
-            driver.delete_all_cookies()
-        except exceptions.TimeoutException: # if we timeout while trying to reset the cookies
+            try:
+                driver.delete_all_cookies()
+            except exceptions.TimeoutException: # if we timeout while trying to reset the cookies
 
-            print("\n\nNew Webdriver window\n")
-            driver.quit() # quit this current driver
-            load_webdriver() # open a new webdriver session
-
+                print("\n\nNew Webdriver window\n")
+                driver.quit() # quit this current driver
+                load_webdriver() # open a new webdriver session
+    
+    export_auto_dataset(num_cars)
 
 
 def main():
