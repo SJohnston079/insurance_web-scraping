@@ -15,6 +15,7 @@ from datetime import datetime, date
 import math
 import re
 import os
+import sys
 
 
 ## setting the working directory to be the folder this file is located in
@@ -395,20 +396,6 @@ def aa_auto_scrape(person_i):
             # select the correct model variant
             selected_model_variant_element = select_model_variant()
 
-
-            # if we couldnt find a singular correct model variant (is relic from testing)
-            if selected_model_variant_element == None:
-
-                # wait for debugging purposes
-                input_text = ""
-                while input_text != "go":
-                    time.sleep(1) # wait for debugging
-                    input_text = input("Enter 'go' to continue: ")
-
-
-                print(end=" -- ") # print for formatting the time elapsed
-                return None
-
             # click the selected model variant
             selected_model_variant_element.click()
 
@@ -567,11 +554,13 @@ def aa_auto_scrape(person_i):
             if int(data["Agreed_value"]) > limits[1]: # if the entered agreed value is greater than the maximum value aa allows
                 agreed_value_input.send_keys(limits[1]) # input the maximum allowed value
                 adjusted_agreed_value = limits[1] # save the new 'adjusted agreed value'
+                aa_output_df.loc[person_i, "AA_agreed_value_was_adjusted"] = 1 # save this value to say that the agreed value was adjusted upwards
                 print("Attempted to input agreed value larger than the maximum", end=" - ")
 
             elif int(data["Agreed_value"]) < limits[0]: # if the entered agreed value is smaller than the minimum value aa allows
                 agreed_value_input.send_keys(limits[0]) # input the minimum allowed value
                 adjusted_agreed_value = limits[0] # save the new 'adjusted agreed value'
+                aa_output_df.loc[person_i, "AA_agreed_value_was_adjusted"] = -1 # save this value to say that the agreed value was adjusted downwards
                 print("Attempted to input agreed value smaller than the minimum", end=" - ")
 
         except exceptions.TimeoutException:
@@ -596,10 +585,8 @@ def aa_auto_scrape(person_i):
         monthly_premium, yearly_premium = convert_money_str_to_int(monthly_premium, cents=True), convert_money_str_to_int(yearly_premium, cents=True)
 
         # returning the monthly/yearly premium and the adjusted agreed value
-        try:
-            return monthly_premium, yearly_premium, adjusted_agreed_value
-        except UnboundLocalError: # if no value saved for adjusted_agreed value, then just return None for it
-            return monthly_premium, yearly_premium, None
+        return monthly_premium, yearly_premium
+
     
 
 
@@ -620,18 +607,12 @@ def aa_auto_scrape(person_i):
             aa_output_df.loc[person_i, "AA_monthly_premium"] = aa_auto_premium[0] # monthly
             aa_output_df.loc[person_i, "AA_yearly_premium"] = aa_auto_premium[1] # yearly
 
-            # if we adjusted the agreed_value, then save to the output dataset
-            if aa_auto_premium[2] != None:
-                aa_output_df.loc[person_i, "AgreedValue"] = aa_auto_premium[2] # the adjusted agreed value
-                aa_output_df.loc[person_i, "Agreed_value_was_adjusted"] = 1 # save this value to say that the agreed value was adjusted
-
-
     except:
-        #try: # checks if the reason our code failed is because the 'we need more information' pop up appeareds
-        Wait.until(EC.visibility_of_element_located( (By.XPATH, "//*[@id='ui-id-3' and text() = 'We need more information']") ) )
-        print("Need more information", end= " -- ")
-        #except exceptions.TimeoutException:
-        #    print("Unknown Error!!", end= " -- ")
+        try: # checks if the reason our code failed is because the 'we need more information' pop up appeareds
+            Wait.until(EC.visibility_of_element_located( (By.XPATH, "//*[@id='ui-id-3' and text() = 'We need more information']") ) )
+            print("Need more information", end= " -- ")
+        except exceptions.TimeoutException:
+            print("Unknown Error!!", end= " -- ")
 
     end_time = time.time() # get time of end of each iteration
     print("Elapsed time:", round(end_time - start_time,2)) # print out the length of time taken
@@ -651,14 +632,14 @@ def auto_scape_all():
     
     # creates a new dataframe to save the scraped info
     global aa_output_df
-    aa_output_df = test_auto_data.loc[:, ["Sample Number", "AgreedValue"]]
+    aa_output_df = test_auto_data.loc[:, ["Sample Number", "PolicyStartDate"]]
+    aa_output_df["AA_agreed_value"] = test_auto_data.loc[:, "AgreedValue"]
     aa_output_df["AA_monthly_premium"] = ["-1"] * len(test_auto_data)
     aa_output_df["AA_yearly_premium"] = ["-1"] * len(test_auto_data)
     aa_output_df["AA_agreed_value_was_adjusted"] = [0] * len(test_auto_data)
 
-    # save the number of cars in the dataset as a variable
-    #num_cars = len(test_auto_data)
-    num_cars = 2
+    # save the number of cars in the dataset as a variable (reading it from the standard input that the 'parent' process passes in)
+    num_cars = int(input())
 
     # loop through all cars in test spreadsheet
     for person_i in range(0, num_cars): 

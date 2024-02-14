@@ -15,6 +15,7 @@ from datetime import datetime, date
 import math
 import re
 import os
+import sys
 
 
 ## setting the working directory to be the folder this file is located in
@@ -293,10 +294,10 @@ def tower_auto_scrape(person_i):
                 if manufacturer_text_input.get_attribute("value") == "": # checks the input fields value is currently empty
                     manufacturer_text_input.send_keys(data["Manufacturer"])
 
-                    time.sleep(3) # wait for page to load
+                    time.sleep(5) # wait for page to load
 
                     # click the button to select the car manufacturer in the dropdown (i just click the 1st drop down option because I assume this must be the correct one)
-                    Wait.until(EC.presence_of_element_located( (By.XPATH, "//*[@id='carMakes-menu-list']/li/div/div[2]/div") )).click() 
+                    Wait.until(EC.element_to_be_clickable( (By.XPATH, "//*[@id='carMakes-menu-list']/li/div/div[2]/div") )).click() 
             except exceptions.TimeoutException:
                 print(f"CANNOT FIND {data["Manufacturer"]}", end=" -- ")
                 return None # return None if can't scrape
@@ -503,10 +504,12 @@ def tower_auto_scrape(person_i):
         if data["Agreed_value"] > max_value:
             data["Agreed_value"] = max_value
             adjusted_agreed_value = max_value # saves the adjusted agreed value to return later
+            tower_output_df.loc[person_i, "Tower_agreed_value_was_adjusted"] = 1 # save this value to say that the agreed value was adjusted upwards
             print("Attempted to input agreed value larger than the maximum", end=" - ")
         elif data["Agreed_value"] < min_value:
             data["Agreed_value"] = min_value
             adjusted_agreed_value = min_value # saves the adjusted agreed value to return later
+            tower_output_df.loc[person_i, "Tower_agreed_value_was_adjusted"] = -1 # save this value to say that the agreed value was adjusted downwards
             print("Attempted to input agreed value smaller than the minimum", end=" - ")
 
 
@@ -548,6 +551,7 @@ def tower_auto_scrape(person_i):
         driver.execute_script("arguments[0].scrollIntoView();", next_button) # scroll down until "Next: Summary" button is on screen (is needed to prevent the click from being intercepted)
         Wait10.until(EC.element_to_be_clickable((By.ID, "btnSubmitPage"))).click()
 
+        time.sleep(5)
 
         # move onto the next page "People"
         Wait10.until(EC.element_to_be_clickable((By.ID, "btnSubmitPage"))).click()
@@ -641,16 +645,12 @@ def tower_auto_scrape(person_i):
             tower_output_df.loc[person_i, "Tower_monthly_premium"] = tower_auto_premium[0] # monthly
             tower_output_df.loc[person_i, "Tower_yearly_premium"] = tower_auto_premium[1] # yearly
 
-            # if we adjusted the agreed_value, then save to the output dataset
-            if tower_auto_premium[2] != None:
-                tower_output_df.loc[person_i, "AgreedValue"] = tower_auto_premium[2] # the adjusted agreed value
-                tower_output_df.loc[person_i, "Agreed_value_was_adjusted"] = 1 # save this value to say that the agreed value was adjusted
     except:
-        #try: # checks if the reason our code failed is because the 'we need more information' pop up appeareds
-        Wait.until(EC.visibility_of_element_located( (By.XPATH, "//*[@id='ui-id-3' and text() = 'We need more information']") ) )
-        print("Need more information", end= " -- ")
-        #except exceptions.TimeoutException:
-        #    print("Unknown Error!!", end= " -- ")
+        try: # checks if the reason our code failed is because the 'we need more information' pop up appeareds
+            Wait.until(EC.visibility_of_element_located( (By.XPATH, "//*[@id='ui-id-3' and text() = 'We need more information']") ) )
+            print("Need more information", end= " -- ")
+        except exceptions.TimeoutException:
+            print("Unknown Error!!", end= " -- ")
 
     end_time = time.time() # get time of end of each iteration
     print("Elapsed time:", round(end_time - start_time,2)) # print out the length of time taken
@@ -673,13 +673,13 @@ def auto_scape_all():
     # creates a new dataframe to save the scraped info
     global tower_output_df
     tower_output_df = test_auto_data.loc[:, ["Sample Number", "PolicyStartDate", "AgreedValue"]]
+    tower_output_df["Tower_agreed_value"] = test_auto_data.loc[:, "AgreedValue"]
     tower_output_df["Tower_monthly_premium"] = ["-1"] * len(test_auto_data)
     tower_output_df["Tower_yearly_premium"] = ["-1"] * len(test_auto_data)
     tower_output_df["Tower_agreed_value_was_adjusted"] = [0] * len(test_auto_data)
 
-    # save the number of cars in the dataset as a variable
-    #num_cars = len(test_auto_data)
-    num_cars = 2
+    # save the number of cars in the dataset as a variable (reading it from the standard input that the 'parent' process passes in)
+    num_cars = int(input())
 
     # loop through all cars in test spreadsheet
     for person_i in range(0, num_cars): 

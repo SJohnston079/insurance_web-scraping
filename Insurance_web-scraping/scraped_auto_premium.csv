@@ -1,3 +1,11 @@
-Sample Number,CoverType,PolicyStartDate,Registration,Vehicle_year,Manufacturer,Model,Type,Series,Body,Engine,CC,Gearbox,Gas,Modifications,Parking,Immobiliser_alarm,BusinessUser,Unit_number,Street_number,Street_name,Street_type,Suburb,Postcode,City,Age,DOB,Licence,NZ_citizen_or_resident,Visa_at_least_1_year,License_years_TOWER,Age_learners_AMISTATE,Gender,FinancePurchase,Incidents_number,Incidents_last2years_TOWER,Incidents_last3years_AA,Incidents_last5years_AMISTATE,Months_since_incident,Date_of_incident,Type_incident,OtherPolicies,Additional Drivers,ExcludeUnder25,AgreedValue,Excess,amiFreeBmax,AAMember,CurrentInsurer
-10001,Comprehensive Car Insurance,14/02/2024,etg624,1999,Nissan,Bluebird,Eprise,,Sedan,Aspirated,1838,4 Sp Automatic,Petrol,No,Locked garage,Yes,No,,8D,KOTUKU,STREET,FRANKTON ,3204, WAIKATO,39,1985-01-24,LEARNERS LICENCE,Yes,,4,16,FEMALE,NO,0,No,No,No,,,,No,No,Yes,3020,500,No,No,No current insurer
-10002,Comprehensive Car Insurance,14/02/2024,,2002,Toyota,Corolla,Fielder,,Wagon,Aspirated,1794,4 Sp Automatic,Petrol - Unleaded ULP,No,Locked garage,Yes,No,,20,CORNWALL,ROAD,RAGLAN ,3295, WAIKATO,31,1993-01-24,NEW ZEALAND FULL LICENCE,Yes,,4,16,FEMALE,NO,0,No,No,No,,,,No,No,Yes,5480,500,No,No,No current insurer
+Sample Number,PolicyStartDate,AA_agreed_value,AA_monthly_premium,AA_yearly_premium,AA_agreed_value_was_adjusted,AMI_agreed_value,AMI_monthly_premium,AMI_yearly_premium,AMI_agreed_value_was_adjusted,AgreedValue,Tower_agreed_value,Tower_monthly_premium,Tower_yearly_premium,Tower_agreed_value_was_adjusted
+10001,14/02/2024,3020,58.64,637.25,0,3020,43.97,493.58,0,3020,3020,64.96,704.09,0
+10002,14/02/2024,5480,64.26,698.14,0,5480,54.2,608.33,0,5480,5480,76.72,832.29,0
+10003,14/02/2024,5400,75.64,821.7,0,5400,81.5,914.54,0,5400,5400,132.17,1437.2,0
+10004,14/02/2024,19340,116.54,1265.44,0,19340,90.91,1020.02,0,19340,19340,145.88,1586.77,0
+10005,14/02/2024,8855,75.36,818.64,0,8855,73.88,829.07,0,8855,8855,102.3,1111.38,0
+10006,14/02/2024,3200,70.0,760.45,0,3200,60.07,674.15,-1,3200,3200,102.49,1113.42,0
+10007,14/02/2024,45000,122.82,1333.55,1,45000,93.82,1052.61,1,45000,45000,-1.0,-1.0,0
+10008,14/02/2024,8700,-1.0,-1.0,0,8700,55.43,622.13,0,8700,8700,81.1,879.8,0
+10009,14/02/2024,84965,-1.0,-1.0,0,84965,207.31,2325.48,1,84965,84965,860.22,9379.64,0
+10010,14/02/2024,14900,114.45,1242.77,0,14900,88.94,998.03,0,14900,14900,120.88,1314.02,0

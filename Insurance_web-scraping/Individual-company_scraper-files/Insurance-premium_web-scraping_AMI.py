@@ -15,6 +15,7 @@ from datetime import datetime, date
 import math
 import re
 import os
+import sys
 
 
 ## setting the working directory to be the folder this file is located in
@@ -178,6 +179,66 @@ def ami_auto_scrape(person_i):
 
     # scrapes the insurance premium for a single vehicle and person at ami
     def ami_auto_scrape_premium(data):
+
+        # defining a function to select the correct model variant
+        def select_model_variant():
+            # scraping these details from the webpage
+            car_variant_options = tuple(driver.find_elements(By.XPATH, '//*[@id="searchByMMYResult"]/div[2]/span'))
+
+            # define the specifications list, in the order that we want to use them to filter out incorrect car variant options
+            specifications_list = ["Model_type", "Model_series", "Engine_size"]
+
+            # iterate through all of the potential car specs that we can use to select the correct drop down option
+            for specification in specifications_list:
+                # initialise an empty list to store the selected car variants
+                selected_car_variants = [] 
+
+                # save the actual value of the specification as a variable (to allow formatting manipulation)
+                if specification == "Num_speeds":
+                    specification_value = f"{data[specification]}SP"
+                elif specification == "Transmission":
+                    specification_value = data["Transmission_type_short"].upper()       
+                else:
+                    specification_value = data[specification]
+
+                # check all car variants for this specification
+                for car_variant in car_variant_options:
+                    
+                    # Check that all of the known car details are correct (either starts with, ends with, or contains the details as a word in the middle of the text)
+                    if car_variant.text.upper().startswith(f"{specification_value} ") or f" {specification_value} " in car_variant.text.upper() or car_variant.text.upper().endswith(f" {specification_value}"):
+
+                        # if this car has correct details add it to the select list
+                        selected_car_variants.append(car_variant) 
+
+
+                # checking if we have managed to isolate one option
+                if len(selected_car_variants) == 1:
+                    return selected_car_variants[0]
+                elif len(selected_car_variants) > 1:
+                    car_variant_options = tuple(selected_car_variants)
+            
+            ## choosing the remaining option with the least number of characters
+            final_car_variant = car_variant_options[0] # initialising the final variant option to the 1st remaining
+            print("unable to fully narrow down", end=" - ")
+
+            # iterating through all other options to find one with least number of characters
+            for car_variant in car_variant_options[1:]:
+
+                #print(car_variant.text) # print out all remaining options, for checking
+
+                if len(car_variant.text) < len(final_car_variant.text):
+                    final_car_variant = car_variant
+            
+            '''
+            print() # print just a newline character
+
+            # printing a message to notify what is happened
+            print(f"SELECTED: {final_car_variant.text}. ACTUAL: {data["Vehicle_year"]} {data["Manufacturer"]} {data["Model"]} {data["Model_type"]}" + 
+                  f"{data["Model_series"]} with body type {data["Body_type"]} and {data["Num_speeds"]} {data["Automatic"]} and {data["Engine_size"]}L engine", end=" - ")
+            '''
+            return final_car_variant
+
+
         # Open the webpage
         driver.get("https://secure.ami.co.nz/css/car/step1")
 
@@ -260,15 +321,13 @@ def ami_auto_scrape(person_i):
         try:
             if pd.isna(data["Model_type"]):
                 raise Exception("NA Model_type") # if the model type is NA we raise an exception, thus going to bottom except block (which it just clicks first option)
-            
-            try: # try with the standard model type
-                Wait.until(EC.element_to_be_clickable(( By.XPATH, "//div[@class='searchResultContainer']//*//label[contains(text(), ' {}')]".format(data["Model_type"]) ))).click() # wait until clickable, then click button to select final vehicle option
-            except exceptions.TimeoutException: # if that doesn't work, try split into individual words
-                model_type = data["Model_type"].split() # splits the model type string into words (allowing us to check for just 1st word)
-                try: #try using just the first word of the model type
-                    Wait.until(EC.element_to_be_clickable(( By.XPATH, "//div[@class='searchResultContainer']//*//label[contains(text(), ' {}')]".format(model_type[0])))).click()
-                except: # try using just the last word of the model type
-                    Wait.until(EC.element_to_be_clickable(( By.XPATH, "//div[@class='searchResultContainer']//*//label[contains(text(), ' {}')]".format(model_type[-1])))).click()
+
+            # select the correct model variant
+            selected_model_variant_element = select_model_variant()
+
+            # click the selected model variant
+            selected_model_variant_element.click()
+
         except: # Selects the 1st option, if a Model type is not specified
             Wait.until(EC.element_to_be_clickable( (By.ID,  "searchedVehicleSpan_0"))).click() # wait until clickable, then click button to select final vehicle option
                 
@@ -380,10 +439,12 @@ def ami_auto_scrape(person_i):
         if data["Agreed_value"] > max_value:
             data["Agreed_value"] = max_value
             adjusted_agreed_value = max_value
+            ami_output_df.loc[person_i, "AMI_agreed_value_was_adjusted"] = 1 # save this value to say that the agreed value was adjusted upwards
             print("Attempted to input agreed value larger than the maximum", end=" - ")
         elif data["Agreed_value"] < min_value:
             data["Agreed_value"] = min_value
             adjusted_agreed_value = min_value
+            ami_output_df.loc[person_i, "AMI_agreed_value_was_adjusted"] = -1 # save this value to say that the agreed value was adjusted downwards
             print("Attempted to input agreed value smaller than the minimum", end=" - ")
 
 
@@ -442,16 +503,12 @@ def ami_auto_scrape(person_i):
             ami_output_df.loc[person_i, "AMI_monthly_premium"] = ami_auto_premium[0] # monthly
             ami_output_df.loc[person_i, "AMI_yearly_premium"] = ami_auto_premium[1] # yearly
 
-            # if we adjusted the agreed_value, then save to the output dataset
-            if ami_auto_premium[2] != None:
-                ami_output_df.loc[person_i, "AgreedValue"] = ami_auto_premium[2] # the adjusted agreed value
-                ami_output_df.loc[person_i, "Agreed_value_was_adjusted"] = 1 # save this value to say that the agreed value was adjusted
     except:
-        #try: # checks if the reason our code failed is because the 'we need more information' pop up appeareds
-        Wait.until(EC.visibility_of_element_located( (By.XPATH, "//*[@id='ui-id-3' and text() = 'We need more information']") ) )
-        print("Need more information", end= " -- ")
-        #except exceptions.TimeoutException:
-        #    print("Unknown Error!!", end= " -- ")
+        try: # checks if the reason our code failed is because the 'we need more information' pop up appeareds
+            Wait.until(EC.visibility_of_element_located( (By.XPATH, "//*[@id='ui-id-3' and text() = 'We need more information']") ) )
+            print("Need more information", end= " -- ")
+        except exceptions.TimeoutException:
+            print("Unknown Error!!", end= " -- ")
 
     end_time = time.time() # get time of end of each iteration
     print("Elapsed time:", round(end_time - start_time,2)) # print out the length of time taken
@@ -471,14 +528,14 @@ def auto_scape_all():
     
     # creates a new dataframe to save the scraped info
     global ami_output_df
-    ami_output_df = test_auto_data.loc[:, ["Sample Number", "PolicyStartDate", "AgreedValue"]]
+    ami_output_df = test_auto_data.loc[:, ["Sample Number", "PolicyStartDate"]]
+    ami_output_df["AMI_agreed_value"] = test_auto_data.loc[:, "AgreedValue"]
     ami_output_df["AMI_monthly_premium"] = ["-1"] * len(test_auto_data)
     ami_output_df["AMI_yearly_premium"] = ["-1"] * len(test_auto_data)
     ami_output_df["AMI_agreed_value_was_adjusted"] = [0] * len(test_auto_data)
 
-    # save the number of cars in the dataset as a variable
-    #num_cars = len(test_auto_data)
-    num_cars = 2
+    # save the number of cars in the dataset as a variable (reading it from the standard input that the 'parent' process passes in)
+    num_cars = int(input())
 
     # loop through all cars in test spreadsheet
     for person_i in range(0, num_cars): 
