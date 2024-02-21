@@ -29,7 +29,7 @@ file_directory = os.path.dirname(file_path)
 parent_dir = os.path.abspath(os.path.join(file_directory, os.pardir))
 
 ## File path definitions
-test_auto_data_xlsx = f"{parent_dir}\\test_auto_data1.xlsx" # defines the path to the input dataset
+test_auto_data_csv = f"{parent_dir}\\test_auto_data1.csv" # defines the path to the input dataset
 
 
 
@@ -37,9 +37,27 @@ test_auto_data_xlsx = f"{parent_dir}\\test_auto_data1.xlsx" # defines the path t
 -------------------------
 Useful functions
 """
-def export_auto_dataset(num_datalines_to_export = len(test_auto_data_xlsx)):
-    auto_dataset_for_export = ami_output_df.head(num_datalines_to_export) # get the given number of lines from the start
-    auto_dataset_for_export.to_csv(f"{parent_dir}\\Individual-company_data-files\\ami_scraped_auto_premiums.csv", index=False)
+def export_auto_dataset(input_indexes):
+    try:
+        # set the column "Sample Number" to be the index column
+        global ami_output_df # making it so that this 'reset' of the index is done to the globally stored data
+        ami_output_df.set_index("Sample Number", drop=True, inplace=True)
+
+        # read in the output dataset
+        insurance_premium_web_scraping_AMI_df = pd.read_csv(f"{parent_dir}\\Individual-company_data-files\\ami_scraped_auto_premiums.csv")
+    except FileNotFoundError:
+        # if there exists no df already, then we just export what we have scraped
+        auto_dataset_for_export = ami_output_df.iloc[input_indexes] # get the given number of lines from the start
+    else:
+        # set the column "Sample Number" to be the index column so the dataframe combine on "Sample Number"
+        insurance_premium_web_scraping_AMI_df.set_index("Sample Number", drop=True, inplace=True)
+
+
+        # combine with the newly scraped data (anywhere there is an overlap, the newer (just scraped) data overwrites the older data)
+        auto_dataset_for_export = ami_output_df.iloc[input_indexes].combine_first(insurance_premium_web_scraping_AMI_df)
+    finally:
+        # export the dataset
+        auto_dataset_for_export.to_csv(f"{parent_dir}\\Individual-company_data-files\\ami_scraped_auto_premiums.csv")
 
 
 def remove_non_numeric(string):
@@ -61,6 +79,34 @@ def convert_money_str_to_int(money_string, cents = False):
         return float(money_string)
     else:
         return int(money_string)
+
+# performing the data reading in and preprocessing
+def dataset_preprocess():
+    # read in the data
+    global test_auto_data_df
+    test_auto_data_df = pd.read_csv(test_auto_data_csv, dtype={"Postcode":"int"})
+
+    # sets all values of the policy start date to be today's date
+    for key in test_auto_data_df:
+        test_auto_data_df['PolicyStartDate'] = datetime.strftime(date.today(), "%d/%m/%Y")
+    
+    # converts the two values which should be dates into dates
+    test_auto_data_df['DOB'] = pd.to_datetime(test_auto_data_df['DOB'], format='%Y-%m-%d')
+    test_auto_data_df['Date_of_incident'] = pd.to_datetime(test_auto_data_df['Date_of_incident'], format='%Y-%m-%d')
+
+    # pads out the front of postcodes with zeroes (as excel removes leading zeros)
+    test_auto_data_df['Postcode'] = test_auto_data_df['Postcode'].apply(postcode_reformat) 
+    
+    # creates a new dataframe to save the scraped info
+    global ami_output_df
+    ami_output_df = test_auto_data_df.loc[:, ["Sample Number", "PolicyStartDate"]]
+    ami_output_df["AMI_agreed_value"] = test_auto_data_df["AgreedValue"].to_string(index=False).strip().split()
+    ami_output_df["AMI_monthly_premium"] = ["-1"] * len(test_auto_data_df)
+    ami_output_df["AMI_yearly_premium"] = ["-1"] * len(test_auto_data_df)
+    ami_output_df["AMI_agreed_value_minimum"] = [-1] * len(test_auto_data_df)
+    ami_output_df["AMI_agreed_value_maximum"] = [-1] * len(test_auto_data_df)
+    ami_output_df["AMI_Error_code"] = ["No Error"] * len(test_auto_data_df)
+
     
 
 def load_webdriver():
@@ -88,36 +134,45 @@ def ami_auto_scrape(person_i):
 
     # defining a function which take the information from the spreadsheet and formats it so it can be used to scrape premium from ami website
     def ami_auto_data_format(person_i):
+        # formatting model series
+        model_series = test_auto_data_df.loc[person_i,'Series']
+
+        # setting NA values to an empty string
+        if pd.isna(model_series):
+            model_series = ""
+        else:
+            model_series = str(model_series)
+
         # formatting street name and type into the correct format
-        street_name = test_auto_data.loc[person_i,'Street_name']
-        street_type = test_auto_data.loc[person_i,'Street_type']
-        suburb = test_auto_data.loc[person_i,'Suburb'].strip()
+        street_name = test_auto_data_df.loc[person_i,'Street_name']
+        street_type = test_auto_data_df.loc[person_i,'Street_type']
+        suburb = test_auto_data_df.loc[person_i,'Suburb'].strip()
         if "(" in street_name:
             street_name = street_name.split("(")[0].strip()
         if "MT " in suburb:
             suburb = suburb.replace("MT", "MOUNT")
 
         # formatting car model type
-        model = test_auto_data.loc[person_i,'Model']
+        model = test_auto_data_df.loc[person_i,'Model']
         if model == "C":
-            model += str(int(math.ceil(test_auto_data.loc[person_i,'CC']/100))) # add on the number of '10 times litres' in the engine
+            model += str(int(math.ceil(test_auto_data_df.loc[person_i,'CC']/100))) # add on the number of '10 times litres' in the engine
 
         # getting the persons birthdate out as a date object (allows us to get the correct format more easily)
-        birthdate = test_auto_data.loc[person_i,'DOB']
+        birthdate = test_auto_data_df.loc[person_i,'DOB']
 
         # formatting drivers licence type for input
         drivers_license_type = ""
-        if test_auto_data.loc[person_i,'Licence'] == "NEW ZEALAND FULL LICENCE":
+        if test_auto_data_df.loc[person_i,'Licence'] == "NEW ZEALAND FULL LICENCE":
             drivers_license_type = "NZ Full" 
-        elif test_auto_data.loc[person_i,'Licence'] == "RESTRICTED LICENCE":
+        elif test_auto_data_df.loc[person_i,'Licence'] == "RESTRICTED LICENCE":
             drivers_license_type = "NZ Restricted" 
-        elif test_auto_data.loc[person_i,'Licence'] == "LEARNERS LICENCE":
+        elif test_auto_data_df.loc[person_i,'Licence'] == "LEARNERS LICENCE":
             drivers_license_type = "NZ Learners" 
         else: # for for generic 'International' (non-NZ) licence
             drivers_license_type = "International / Other overseas licence" 
 
         # formatting the number of years the person had had their drivers licence
-        drivers_license_years = test_auto_data.loc[person_i,'License_years_TOWER']
+        drivers_license_years = test_auto_data_df.loc[person_i,'License_years_TOWER']
         if drivers_license_years < 1:
             drivers_license_years = "Less than a year"
         elif drivers_license_years == 1:
@@ -128,7 +183,7 @@ def ami_auto_scrape(person_i):
             drivers_license_years = "{} years".format(drivers_license_years)
         
         # formatting the excess (rounded to the nearest option provided)
-        excess = float(test_auto_data.loc[person_i,'Excess']) # convert into a floating point value (if it is not already one)
+        excess = float(test_auto_data_df.loc[person_i,'Excess']) # convert into a floating point value (if it is not already one)
         excess_options = [100, 400, 500, 1000, 2000] # defines a list of the acceptable 
         # choose the smallest excess option  which is larger than (or equal to) the customers desired excess level
         excess_index = 0
@@ -136,39 +191,40 @@ def ami_auto_scrape(person_i):
             excess_index += 1
         excess_index += 1 # add on extra to the value of the excess index (as the option buttons for choosing the excess start at 1, not 0)
         # define a dict to store information for a given person and car for ami
-        ami_data = {"Registration_number":test_auto_data.loc[person_i,'Registration'],
-                    "Manufacturer":test_auto_data.loc[person_i,'Manufacturer'],
+        ami_data = {"Registration_number":test_auto_data_df.loc[person_i,'Registration'],
+                    "Manufacturer":test_auto_data_df.loc[person_i,'Manufacturer'],
                     "Model":model,
-                    "Model_type":test_auto_data.loc[person_i,'Type'],
-                    "Vehicle_year":test_auto_data.loc[person_i,'Vehicle_year'],
-                    "Body_type":test_auto_data.loc[person_i,'Body'].upper(),
-                    "Engine_size":"{}cc".format(int(test_auto_data.loc[person_i,'CC'])),
-                    "Immobiliser":test_auto_data.loc[person_i,'Immobiliser_alarm'],
-                    "Business_use":test_auto_data.loc[person_i,'BusinessUser'],
-                    "Unit":test_auto_data.loc[person_i,'Unit_number'],
-                    "Street_number":test_auto_data.loc[person_i,'Street_number'],
+                    "Model_type":test_auto_data_df.loc[person_i,'Type'],
+                    "Model_series":model_series,
+                    "Vehicle_year":test_auto_data_df.loc[person_i,'Vehicle_year'],
+                    "Body_type":test_auto_data_df.loc[person_i,'Body'].upper(),
+                    "Engine_size":"{}cc".format(int(test_auto_data_df.loc[person_i,'CC'])),
+                    "Immobiliser":test_auto_data_df.loc[person_i,'Immobiliser_alarm'],
+                    "Business_use":test_auto_data_df.loc[person_i,'BusinessUser'],
+                    "Unit":test_auto_data_df.loc[person_i,'Unit_number'],
+                    "Street_number":test_auto_data_df.loc[person_i,'Street_number'],
                     "Street_name":street_name + " " + street_type,
                     "Suburb":suburb,
-                    "Postcode":test_auto_data.loc[person_i,'Postcode'],
+                    "Postcode":test_auto_data_df.loc[person_i,'Postcode'],
                     "Birthdate_day":int(birthdate.strftime("%d")),
                     "Birthdate_month":birthdate.strftime("%B"),
                     "Birthdate_year":int(birthdate.strftime("%Y")),
-                    "Sex":test_auto_data.loc[person_i,'Gender'],
+                    "Sex":test_auto_data_df.loc[person_i,'Gender'],
                     "Drivers_license_type":drivers_license_type,
                     "Drivers_license_years":drivers_license_years, # years since driver got their learners licence
-                    "Incidents_5_year":test_auto_data.loc[person_i,'Incidents_last5years_AMISTATE'],
-                    "NZ_citizen_or_resident":test_auto_data.loc[person_i,'NZ_citizen_or_resident'],
-                    "1_year_Visa":test_auto_data.loc[person_i,'Visa_at_least_1_year'],
-                    "Agreed_value":test_auto_data.loc[person_i, "AgreedValue"],
+                    "Incidents_5_year":test_auto_data_df.loc[person_i,'Incidents_last5years_AMISTATE'],
+                    "NZ_citizen_or_resident":test_auto_data_df.loc[person_i,'NZ_citizen_or_resident'],
+                    "1_year_Visa":test_auto_data_df.loc[person_i,'Visa_at_least_1_year'],
+                    "Agreed_value":test_auto_data_df.loc[person_i, "AgreedValue"],
                     "Excess_index":str(excess_index)
                     }
         
         # adding info on the date and type of incident to the ami_data dictionary ONLY if the person has had an incident within the last 5 years
-        incident_date = test_auto_data.loc[person_i,'Date_of_incident']
+        incident_date = test_auto_data_df.loc[person_i,'Date_of_incident']
         if ami_data["Incidents_5_year"] == "Yes":
             ami_data["Incident_date_month"] = incident_date.strftime("%B")
             ami_data["Incident_date_year"] = int(incident_date.strftime("%Y"))
-            incident_type = test_auto_data.loc[person_i,'Type_incident'].split("-")[0].strip()
+            incident_type = test_auto_data_df.loc[person_i,'Type_incident'].split("-")[0].strip()
             if incident_type == "Not at fault":
                 ami_data["Incident_type"] = "Not At Fault Accident"
             else:
@@ -220,22 +276,16 @@ def ami_auto_scrape(person_i):
             ## choosing the remaining option with the least number of characters
             final_car_variant = car_variant_options[0] # initialising the final variant option to the 1st remaining
             print("unable to fully narrow down", end=" - ")
+            ami_output_df.loc[person_i, "AMI_Error_code"] = "Several Car Variant Options Warning"
+
+
 
             # iterating through all other options to find one with least number of characters
             for car_variant in car_variant_options[1:]:
-
-                #print(car_variant.text) # print out all remaining options, for checking
-
+                
                 if len(car_variant.text) < len(final_car_variant.text):
                     final_car_variant = car_variant
             
-            '''
-            print() # print just a newline character
-
-            # printing a message to notify what is happened
-            print(f"SELECTED: {final_car_variant.text}. ACTUAL: {data["Vehicle_year"]} {data["Manufacturer"]} {data["Model"]} {data["Model_type"]}" + 
-                  f"{data["Model_series"]} with body type {data["Body_type"]} and {data["Num_speeds"]} {data["Automatic"]} and {data["Engine_size"]}L engine", end=" - ")
-            '''
             return final_car_variant
 
 
@@ -282,7 +332,7 @@ def ami_auto_scrape(person_i):
                 Wait.until(EC.element_to_be_clickable((By.ID, "Model"))).click() # wait until car model input box is clickable, then open it
                 Wait.until(EC.element_to_be_clickable((By.XPATH, "//div[text()='{}']".format(data["Model"])))).click() # wait until button which has the correct car model information is clickable, then click
             except exceptions.TimeoutException:
-                print("CANNOT FIND {manufacturer} MODEL {model}".format(year = data["Vehicle_year"], manufacturer = data["Manufacturer"], model = test_auto_data.loc[person_i,'Model']), end=" -- ")
+                print("CANNOT FIND {manufacturer} MODEL {model}".format(year = data["Vehicle_year"], manufacturer = data["Manufacturer"], model = test_auto_data_df.loc[person_i,'Model']), end=" -- ")
                 return None # return None if can't scrape
 
             # inputting car year
@@ -292,7 +342,7 @@ def ami_auto_scrape(person_i):
                 driver.find_element(By.ID, "Year").click()
                 Wait.until(EC.element_to_be_clickable((By.XPATH, "/html/body/div[6]/div/div[text()='{}']".format(data["Vehicle_year"])))).click() # clicking the button which has the correct car model information
             except exceptions.TimeoutException:
-                print("CANNOT FIND {manufacturer} {model} FROM YEAR {year}".format(year = data["Vehicle_year"], manufacturer = data["Manufacturer"], model = test_auto_data.loc[person_i,'Model']), end=" -- ")
+                print("CANNOT FIND {manufacturer} {model} FROM YEAR {year}".format(year = data["Vehicle_year"], manufacturer = data["Manufacturer"], model = test_auto_data_df.loc[person_i,'Model']), end=" -- ")
                 return None # return None if can't scrape
 
             # inputting car body type
@@ -426,7 +476,7 @@ def ami_auto_scrape(person_i):
         try:
             Wait.until(EC.element_to_be_clickable((By.XPATH, '//*[@id="getQuoteError153"]/div[2]/div[1]/button/span[1]')))
             print("Need more information!")
-            return None
+            return "Need more information!"
         except exceptions.TimeoutException:
             pass
 
@@ -435,18 +485,19 @@ def ami_auto_scrape(person_i):
         min_value = convert_money_str_to_int(Wait10.until(EC.presence_of_element_located( (By.XPATH, "//*[@id='slider']/span[1]") )).text) # get the min agreed value
         max_value = convert_money_str_to_int(Wait10.until(EC.presence_of_element_located( (By.XPATH, "//*[@id='slider']/span[2]") )).text) # get the max agreed value
         
+        ami_output_df.loc[person_i, "AMI_agreed_value_minimum"] = min_value # save the minimum allowed agreed value
+        ami_output_df.loc[person_i, "AMI_agreed_value_maximum"] = max_value # save the maximum allowed agreed value
+
         # check if our attempted agreed value is valid. if not, round up/down to the min/max value
         if data["Agreed_value"] > max_value:
             data["Agreed_value"] = max_value
-            adjusted_agreed_value = max_value
-            ami_output_df.loc[person_i, "AMI_agreed_value_was_adjusted"] = 1 # save this value to say that the agreed value was adjusted upwards
             print("Attempted to input agreed value larger than the maximum", end=" - ")
         elif data["Agreed_value"] < min_value:
             data["Agreed_value"] = min_value
-            adjusted_agreed_value = min_value
-            ami_output_df.loc[person_i, "AMI_agreed_value_was_adjusted"] = -1 # save this value to say that the agreed value was adjusted downwards
             print("Attempted to input agreed value smaller than the minimum", end=" - ")
 
+        # output the corrected agreed value
+        ami_output_df.loc[person_i, "AMI_agreed_value"] = data["Agreed_value"]
 
         # inputs the agreed value input the input field (after making sure its valid)
         agreed_value_input = driver.find_element(By.ID, "agreedValueText") # find the input field for the agreed value
@@ -458,7 +509,7 @@ def ami_auto_scrape(person_i):
         # check that the 'something is wrong' popup is not present, if it is closes it
         try:
             Wait.until(EC.presence_of_element_located((By.XPATH, "//*[@id='errorRateQuote']/div[2]/div[1]/button")) ).click()
-            print("Clicked x")
+            print("Clicked Something is wrong popup button", end=" - ")
         except exceptions.TimeoutException:
             pass
         
@@ -471,6 +522,7 @@ def ami_auto_scrape(person_i):
 
         except exceptions.TimeoutException:
             print("Unchangable excess", end=" -- ")
+            ami_output_df.loc[person_i, "AMI_Error_code"] = "Excess cannot be changed"
 
             time.sleep(3) # wait for page to update the final premiums
 
@@ -481,10 +533,8 @@ def ami_auto_scrape(person_i):
         yearly_premium = float(annual_risk_premium.text.replace(",", "")[1:])
 
         # return the scraped premiums
-        try:
-            return monthly_premium, yearly_premium, adjusted_agreed_value
-        except UnboundLocalError: # if no value saved for adjusted_agreed value, then just return None for it
-            return monthly_premium, yearly_premium, None
+        return monthly_premium, yearly_premium
+
 
 
     # get time of start of each iteration
@@ -494,7 +544,7 @@ def ami_auto_scrape(person_i):
     try:
         # scrapes the insurance premium for a single vehicle and person
         ami_auto_premium = ami_auto_scrape_premium(ami_auto_data_format(person_i)) 
-        if ami_auto_premium != None: # if an actual result is returned
+        if ami_auto_premium != None and ami_auto_premium != "Need more information!": # if an actual result is returned
 
             # print the scraping results
             print( ami_auto_premium[0],  ami_auto_premium[1], end =" -- ")
@@ -502,43 +552,34 @@ def ami_auto_scrape(person_i):
             # save the scraped premiums to the output dataset
             ami_output_df.loc[person_i, "AMI_monthly_premium"] = ami_auto_premium[0] # monthly
             ami_output_df.loc[person_i, "AMI_yearly_premium"] = ami_auto_premium[1] # yearly
-
+        elif ami_auto_premium == "Need more information!":
+            ami_output_df.loc[person_i, "AMI_Error_code"] = "Webiste Does Not Quote For This Car Variant"
+        else:
+            ami_output_df.loc[person_i, "AMI_Error_code"] = "Unknown Error"
     except:
         try: # checks if the reason our code failed is because the 'we need more information' pop up appeareds
             Wait.until(EC.visibility_of_element_located( (By.XPATH, "//*[@id='ui-id-3' and text() = 'We need more information']") ) )
             print("Need more information", end= " -- ")
+            ami_output_df.loc[person_i, "AMI_Error_code"] = "Webiste Does Not Quote For This Car Variant"
         except exceptions.TimeoutException:
             print("Unknown Error!!", end= " -- ")
+            ami_output_df.loc[person_i, "AMI_Error_code"] = "Unknown Error"
 
     end_time = time.time() # get time of end of each iteration
     print("Elapsed time:", round(end_time - start_time,2)) # print out the length of time taken
 
 
 def auto_scape_all():
-    # read in the data
-    global test_auto_data
-    test_auto_data = pd.read_excel(test_auto_data_xlsx, dtype={"Postcode":"int"})
+    # call a function to read in a preprocess the data
+    dataset_preprocess()
 
-    # sets all values of the policy start date to be today's date
-    for key in test_auto_data:
-        test_auto_data['PolicyStartDate'] = datetime.strftime(date.today(), "%d/%m/%Y")
-
-    # pads out the front of postcodes with zeroes (as excel removes leading zeros)
-    test_auto_data['Postcode'] = test_auto_data['Postcode'].apply(postcode_reformat) 
-    
-    # creates a new dataframe to save the scraped info
-    global ami_output_df
-    ami_output_df = test_auto_data.loc[:, ["Sample Number", "PolicyStartDate"]]
-    ami_output_df["AMI_agreed_value"] = test_auto_data.loc[:, "AgreedValue"]
-    ami_output_df["AMI_monthly_premium"] = ["-1"] * len(test_auto_data)
-    ami_output_df["AMI_yearly_premium"] = ["-1"] * len(test_auto_data)
-    ami_output_df["AMI_agreed_value_was_adjusted"] = [0] * len(test_auto_data)
-
-    # save the number of cars in the dataset as a variable (reading it from the standard input that the 'parent' process passes in)
-    num_cars = int(input())
+    # save the start index and the number of cars in the dataset as a variable (reading it from the standard input that the 'parent' process passes in)
+    input_indexes = input()
+    input_indexes = input_indexes.replace("[", "").replace("]", "").split(",")
+    input_indexes = list(map(int, input_indexes))
 
     # loop through all cars in test spreadsheet
-    for person_i in range(0, num_cars): 
+    for person_i in input_indexes: 
 
         print(f"{person_i}: AMI: ", end = "") # print out the iteration number
 
@@ -555,7 +596,7 @@ def auto_scape_all():
                 load_webdriver() # open a new webdriver session
     
 
-    export_auto_dataset(num_cars)
+    export_auto_dataset(input_indexes)
 
 
 

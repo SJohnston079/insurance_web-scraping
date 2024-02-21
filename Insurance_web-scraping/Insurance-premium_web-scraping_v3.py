@@ -1,3 +1,4 @@
+## library imports
 # webscraping related imports
 from selenium import webdriver
 from selenium.common import exceptions
@@ -13,10 +14,9 @@ import time
 import pandas as pd
 from datetime import datetime, date
 import math
-import re
 import os
 
-# other imports
+# other imports 
 import subprocess as sp
 import multiprocessing
 
@@ -30,8 +30,6 @@ file_directory = os.path.dirname(file_path)
 # set the working directory to be the directory of this file
 os.chdir(file_directory)
 
-print(os.getcwd())
-
 ## File path definitions
 test_auto_data_xlsx = f"{file_directory}\\test_auto_data1.xlsx" # defines the path to the input dataset
 
@@ -41,20 +39,7 @@ test_auto_data_xlsx = f"{file_directory}\\test_auto_data1.xlsx" # defines the pa
 -------------------------
 Useful functions
 """
-# define function to export the final dataset
-def export_auto_dataset(output_df, num_cars):
-    auto_dataset_for_export = output_df.head(num_cars) # get the given number of lines from the start
-    auto_dataset_for_export.to_csv("scraped_auto_premium.csv", index=False)
-
-# Define a function to run the subprocess
-def run_subprocess(args):
-    # saving the arguments as more intuitive names
-    company, num_cars = args[0], args[1]
-
-    # running the process (the python file)
-    process = sp.Popen(['python', f'Individual-company_scraper-files\\insurance-premium_web-scraping_{company}.py'], stdin=sp.PIPE, text=True)
-    process.communicate(input=str(num_cars)) # passing num_cars into the process as a standard input
-
+# define a function to merge dfs
 def merge_dfs(dfs_list, merge_key_columns):
     # merging the individual datasets into one dataset for output
     merged_df = pd.merge(dfs_list[0], dfs_list[1], on=merge_key_columns)
@@ -66,29 +51,123 @@ def merge_dfs(dfs_list, merge_key_columns):
 
     return merged_df
 
-def changes_in_agreed_value_adjustments(adjusted_df, insurance_companies):
-    # iterates through all of the examples where the adjusted value had to be changed and ensures that the rest of the companies are using the same adjusted value
-    for index, row in adjusted_df.iterrows():
-        adjusted_down_values = []
-        adjusted_up_values = []
-        for company in insurance_companies:
+# define function to export the final dataset
+def export_auto_dataset(num_cars):
+    # read in all of the individual company datasets
+    individual_company_dfs = {company:pd.read_csv(f'Individual-company_data-files\\{company.lower()}_scraped_auto_premiums.csv') for company in insurance_companies}
 
-            if row[f"{company}_agreed_value_was_adjusted"] == 1: # if the agreed value was adjusted UPWARDS for this company on this row
-                print(f"agreed value was adjusted UPWARDS for {index}th example of {company}")
-                print(row)
-                adjusted_up_values.append(row[f"{company}_agreed_value"]) # saves the adjusted agreed value for later comparison
-            elif row[f"{company}_agreed_value_was_adjusted"] == -1: # if the agreed value was adjusted DOWNWARDS for this company on this row
-                print(f"agreed value was adjusted DOWNWARDS for {index}th example of {company}")
-                adjusted_down_values.append(row[f"{company}_agreed_value"]) # saves the adjusted agreed value for later comparison
-                print(row)
+    # reduce the length of test_auto_data to be equal to the specified number of cars
+    output_df = test_auto_data.head(num_cars)
 
+    # set the policy start date to be equal to be todays date (as all of the individual company dfs have the polciy start date as todays date)
+    output_df.loc["PolicyStartDate"] = individual_company_dfs["AA"]["PolicyStartDate"]
+
+    # removing columns from the individual company dfs that we dont want in the final output
+    individual_company_dfs = [individual_company_dfs[company].drop(["PolicyStartDate", f"{company}_agreed_value"], axis=1) for company in insurance_companies]
+
+    # adding the info that was scraped from the website into the output dataframe
+    output_df = merge_dfs([output_df] + individual_company_dfs, ["Sample Number"])
+
+    # export the dataframe to the csv
+    output_df.to_csv("scraped_auto_premiums.csv", index=False) 
+
+# defining a function to run a single subprocess
+def run_subprocess(args):
+    # saving the arguments as more intuitive names
+    company, row_indexes = args[0], args[1]
+    # running the process (the python file)
+    process = sp.Popen(['python', f'Individual-company_scraper-files\\insurance-premium_web-scraping_{company}.py'], stdin=sp.PIPE, text=True)
+
+    process.communicate(input=str(row_indexes)) # passing all of the row indexes into the process as a standard input
+
+# defining a function to run all the subprocesses
+def runnning_the_subprocesses(indexes):
+    # defining the arugments to be passed down into the subprocesses
+    args = [(company, indexes[company]) for company in insurance_companies if len(indexes[company]) > 0]
+
+    # Start all the processes
+    with multiprocessing.Pool() as pool:
+        pool.map(run_subprocess, args)
+
+# define a function to go back over all the examples where the agreed value was changed, as redo the scraping for the other companies, to ensure all have the same agreed value
+def redo_changed_agreed_value(start_i, end_i):
+    # checks if the agreed values were changed on any of the companies. If they were returns the row number
+    def check_agreed_values(index):
+        # saves the original agreed value (from the input excel spreadsheet) as a variable for comparison
+        original_agreed_val = int(test_auto_data.loc[index, "AgreedValue"])
+
+        # save all of the agreed values that are different from the original agreed value
+        adjusted_agreed_val_companies = [f"{company}" for company in insurance_companies if original_agreed_val != int(insurance_company_dfs[f"{company}"].loc[index, f"{company}_agreed_value"])]
+
+        if len(adjusted_agreed_val_companies) > 0:
+            return index, adjusted_agreed_val_companies
+
+    def selected_agreed_value():
+        # saves the original agreed value (from the input excel spreadsheet) as a variable for comparison
+        original_agreed_val = int(test_auto_data.loc[row_index, "AgreedValue"])
+
+        if abs(original_agreed_val - agreed_value_maximum) < abs(original_agreed_val - agreed_value_minimum):
+            return agreed_value_maximum
+        else:
+            return agreed_value_minimum
+
+    # read all of the individual company datasets into the dictionary
+    insurance_company_dfs = {f"{company}":pd.read_csv(f'Individual-company_data-files\\{company.lower()}_scraped_auto_premiums.csv') for company in insurance_companies}
+
+
+    # gets all the row indexes where the agreed value has been modified
+    adjusted_row_info = [(check_agreed_values(i)) for i in range(start_i, end_i) if check_agreed_values(i) != None]
+
+    redo_scrape_args = {f"{company}":[] for company in insurance_companies}
+
+    for row_index, companies in adjusted_row_info:
+        # gets all the limits of the agreed values for each individual company from their dataframe
+        agreed_value_maximum = [x for x in [int(insurance_company_dfs[f"{company}"].loc[row_index, f"{company}_agreed_value_maximum"]) for company in insurance_companies] if x >= 0] # gets all (that are non-negative) upper limits for the agreed value (as negative values can only occur if there was an error)
+        agreed_value_minimum = [y for y in [int(insurance_company_dfs[f"{company}"].loc[row_index, f"{company}_agreed_value_minimum"]) for company in insurance_companies] if y >= 0] # gets all (that are non-negative) lower limits for the agreed value (as negative values can only occur if there was an error)
+
+        # the upper and lower limits for agreed values are the lowest maximum and highest minimum
+        agreed_value_maximum = min(agreed_value_maximum)
+        agreed_value_minimum = max(agreed_value_minimum)
+
+        # checking if the agreed value limits are not viable
+        if agreed_value_maximum < agreed_value_minimum: # if the max is smaller than the min, then there are no agreed values that can be acceptable
+            raise ValueError(f"Agreed value acceptable range is inconsistent on row {row_index}")
         
-        if len(adjusted_up_values) > 0 and len(adjusted_down_values) > 0:
-            print("INCONSISTENT AGREED VALUE RANGES", row)
-        elif len(adjusted_up_values) > 0: # if agreed values were only adjusted up, select the smallest one (as it will be inside the accepted ranges of all of the others)
-            print("Selected:", min(adjusted_up_values))
-        elif len(adjusted_down_values) > 0: # if agreed values were only adjusted down, select the largest one (as it will be inside the accepted ranges of all of the others)
-            print("Selected:", max(adjusted_down_values))
+        # save the agreed values to test_auto_data
+        chosen_agreed_value = selected_agreed_value()
+        test_auto_data.loc[row_index, "AgreedValue"] = chosen_agreed_value
+
+        for company in insurance_companies:
+            if int(insurance_company_dfs[f"{company}"].loc[row_index, f"{company}_agreed_value"]) != chosen_agreed_value: 
+                redo_scrape_args[company].append(row_index)
+    
+    # output a csv which the subprocesses will read from, including all of the newly modified agreed values
+    test_auto_data.to_csv("test_auto_data1.csv", index=False) 
+    
+    # redo all of the scrapes where the agreed value was inconsistent
+    runnning_the_subprocesses(redo_scrape_args)
+
+# define a function to go back over all the examples where the agreed value was changed, as redo the scraping for the other companies, to ensure all have the same agreed value
+def redo_website_scrape_errors(start_i, end_i):
+    # checks if the agreed values were changed on any of the companies. If they were returns the row number
+    def find_fixable_errors(company):
+        return [row_i for row_i in range(start_i, end_i) if insurance_company_dfs[f"{company}"].loc[row_i, f"{company}_Error_code"] == "Unknown Error"]
+
+    # read all of the individual company datasets into the dictionary
+    insurance_company_dfs = {f"{company}":pd.read_csv(f'Individual-company_data-files\\{company.lower()}_scraped_auto_premiums.csv') for company in insurance_companies}
+
+    # gets all of the rows for each company that can be redone 
+    redo_scrape_args = {f"{company}":find_fixable_errors(company) for company in insurance_companies}
+
+    # redo all of the scrapes where the the error was 'unknown' meaning it could work on this attempt
+    runnning_the_subprocesses(redo_scrape_args)
+
+# deletes all the individual comapny csvs when we are finished with them (to make a blank slate for next time)
+def delete_intermediary_csvs():
+    file_csvs = [f"{file_directory}\\Individual-company_data-files\\{company.lower()}_scraped_auto_premiums.csv" for company in insurance_companies] + [f"{file_directory}\\test_auto_data1.csv"]
+    for file_csv in file_csvs:
+        os.remove(file_csv)
+
 """
 -------------------------
 """
@@ -96,49 +175,46 @@ def changes_in_agreed_value_adjustments(adjusted_df, insurance_companies):
 
 def auto_scape_all():
     # define a list of insurance companies to iterate through
+    global insurance_companies
     insurance_companies = ["AA", "AMI", "Tower"]
 
     # read in the test dataset
+    global test_auto_data
     test_auto_data = pd.read_excel(test_auto_data_xlsx, dtype={"Postcode":"int"})
+    test_auto_data.to_csv("test_auto_data1.csv", index=False) # output a csv which the subprocesses will read from
 
-    # saveing the length of test_auto_data as num_cars
+
+    # saving the length of test_auto_data as num_cars
     num_cars = 10
     #num_cars = len(test_auto_data)
 
     # estimate the number of seconds testing all cars on each company website will take
     approximate_total_times = [(time * num_cars) for time in [46, 40, 65]]
-    total_time_hours = max(approximate_total_times) / 3600 # convert seconds to hours for the estimated longest time
+    total_time_hours = max(approximate_total_times)*1.2 / 3600 # convert seconds to hours for the estimated longest time
     total_time_minutes = round((total_time_hours - int(total_time_hours)) * 60) # reformat into minute and hours
     total_time_hours = math.floor(total_time_hours)
 
     # print out the time to execute estimate
     print(f"Program will take approximately {total_time_hours} hours and {total_time_minutes} minutes to scrape the premiums for {num_cars} cars on the AA, AMI and Tower Websites", end="\n\n\n")
 
-    
-    #args = [(company, num_cars) for company in insurance_companies]
+    # defining the row indexes of all of the cars we are going to scrape
+    indexes = [i for i in range(num_cars)]
+    indexes = {company:indexes for company in insurance_companies}
 
-    # Start all the processes
-    #with multiprocessing.Pool() as pool:
-    #    pool.map(run_subprocess, args)
+    # running all of the subprocesses (starting scraping from all website simultaneously)
+    runnning_the_subprocesses(indexes)
 
-
-    # read the individual company datasets into the dictionary
-    insurance_company_dfs = {f"{company}":pd.read_csv(f'Individual-company_data-files\\{company.lower()}_scraped_auto_premiums.csv') for company in insurance_companies}
-
-    # merging the company datasets into a single dataset
-    merged_company_df = merge_dfs(list(insurance_company_dfs.values()), ["Sample Number", "PolicyStartDate"])
-
-    # gets all the examples where for any one of the companies, the agreed value was adjusted
-    filtered_merged_company_df = merged_company_df.query("AA_agreed_value_was_adjusted != 0 or AMI_agreed_value_was_adjusted != 0 or Tower_agreed_value_was_adjusted != 0")
+    # for all errors that are potentially still scrapable, attempt to scrape again (to fix)
+    redo_website_scrape_errors(0, num_cars)
 
     # ensures that on all website, the agreed value input has been the same
-    changes_in_agreed_value_adjustments(filtered_merged_company_df , insurance_companies)
+    redo_changed_agreed_value(0, num_cars)
 
-    # temporary dataframe length adjustment
-    #test_auto_data = test_auto_data.head(num_cars)
+    # export the dataset to 'scraped_auto_premiums'
+    export_auto_dataset(num_cars)
 
-    #export_auto_dataset(test_auto_data, num_cars)
-
+    # delete intermediary (individual company) csvs
+    delete_intermediary_csvs()
 
 def main():
 

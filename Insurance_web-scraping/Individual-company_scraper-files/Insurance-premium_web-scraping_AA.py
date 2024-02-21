@@ -29,15 +29,34 @@ file_directory = os.path.dirname(file_path)
 parent_dir = os.path.abspath(os.path.join(file_directory, os.pardir))
 
 ## File path definitions
-test_auto_data_xlsx = f"{parent_dir}\\test_auto_data1.xlsx" # defines the path to the input dataset
+test_auto_data_csv = f"{parent_dir}\\test_auto_data1.csv" # defines the path to the input dataset
 
 """
 -------------------------
 Useful functions
 """
-def export_auto_dataset(num_datalines_to_export = len(test_auto_data_xlsx)):
-    auto_dataset_for_export = aa_output_df.head(num_datalines_to_export) # get the given number of lines from the start
-    auto_dataset_for_export.to_csv(f"{parent_dir}\\Individual-company_data-files\\aa_scraped_auto_premiums.csv", index=False)
+def export_auto_dataset(row_indexes):
+    try:
+        # set the column "Sample Number" to be the index column
+        global aa_output_df # making it so that this 'reset' of the index is done to the globally stored data
+        aa_output_df.set_index("Sample Number", drop=True, inplace=True)
+
+        # read in the output dataset
+        insurance_premium_web_scraping_AA_df = pd.read_csv(f"{parent_dir}\\Individual-company_data-files\\aa_scraped_auto_premiums.csv")
+    
+    except FileNotFoundError:
+        # if there exists no df already, then we just export what we have scraped
+        auto_dataset_for_export = aa_output_df.iloc[row_indexes] # get the given number of lines from the start
+    else:
+        # set the column "Sample Number" to be the index column so the dataframe combine on "Sample Number""
+        insurance_premium_web_scraping_AA_df.set_index("Sample Number", drop=True, inplace=True)
+
+        # combine with the newly scraped data (anywhere there is an overlap, the newer (just scraped) data overwrites the older data)
+        auto_dataset_for_export = aa_output_df.iloc[row_indexes].combine_first(insurance_premium_web_scraping_AA_df)
+    finally:
+        
+        # export the dataset
+        auto_dataset_for_export.to_csv(f"{parent_dir}\\Individual-company_data-files\\aa_scraped_auto_premiums.csv")
 
 
 def remove_non_numeric(string):
@@ -61,6 +80,34 @@ def convert_money_str_to_int(money_string, cents = False):
         return float(money_string)
     else:
         return int(money_string)
+
+# performing the data reading in and preprocessing
+def dataset_preprocess():
+    # read in the data
+    global test_auto_data_df
+    test_auto_data_df = pd.read_csv(test_auto_data_csv, dtype={"Postcode":"int"})
+
+    # sets all values of the policy start date to be today's date
+    for key in test_auto_data_df:
+        test_auto_data_df['PolicyStartDate'] = datetime.strftime(date.today(), "%d/%m/%Y")
+    
+    # converts the two values which should be dates into dates
+    test_auto_data_df['DOB'] = pd.to_datetime(test_auto_data_df['DOB'], format='%Y-%m-%d')
+    test_auto_data_df['Date_of_incident'] = pd.to_datetime(test_auto_data_df['Date_of_incident'], format='%Y-%m-%d')
+
+    # pads out the front of postcodes with zeroes (as excel removes leading zeros)
+    test_auto_data_df['Postcode'] = test_auto_data_df['Postcode'].apply(postcode_reformat) 
+
+    # creates a new dataframe to save the scraped info
+    global aa_output_df
+    aa_output_df = test_auto_data_df.loc[:, ["Sample Number", "PolicyStartDate"]]
+    aa_output_df["AA_agreed_value"] = test_auto_data_df["AgreedValue"].to_string(index=False).strip().split()
+    aa_output_df["AA_monthly_premium"] = ["-1"] * len(test_auto_data_df)
+    aa_output_df["AA_yearly_premium"] = ["-1"] * len(test_auto_data_df)
+    aa_output_df["AA_agreed_value_minimum"] = [-1] * len(test_auto_data_df)
+    aa_output_df["AA_agreed_value_maximum"] = [-1] * len(test_auto_data_df)
+    aa_output_df["AA_Error_code"] = ["No Error"] * len(test_auto_data_df)
+
 
 # a function to open the webdriver (chrome simulation)
 def load_webdriver():
@@ -87,7 +134,7 @@ def aa_auto_scrape(person_i):
     # defining a function which take the information from the spreadsheet and formats it so it can be used to scrape premium from aa website
     def aa_auto_data_format(person_i):
         # formatting model type
-        model_type = test_auto_data.loc[person_i,'Type']
+        model_type = test_auto_data_df.loc[person_i,'Type']
 
         # setting NA values to be an empty string
         if pd.isna(model_type):
@@ -98,7 +145,7 @@ def aa_auto_scrape(person_i):
             model_type = str(model_type).upper()
 
         # formatting model series
-        model_series = test_auto_data.loc[person_i,'Series']
+        model_series = test_auto_data_df.loc[person_i,'Series']
 
         # setting NA values to an empty string
         if pd.isna(model_series):
@@ -108,10 +155,10 @@ def aa_auto_scrape(person_i):
 
 
         # getting the street address
-        house_number = remove_non_numeric( str(test_auto_data.loc[person_i,'Street_number']) ) # removes all non-numeric characters from the house number (e.g. removes A from 14A)
-        street_name = test_auto_data.loc[person_i,'Street_name']
-        street_type = test_auto_data.loc[person_i,'Street_type']
-        suburb = test_auto_data.loc[person_i,'Suburb']
+        house_number = remove_non_numeric( str(test_auto_data_df.loc[person_i,'Street_number']) ) # removes all non-numeric characters from the house number (e.g. removes A from 14A)
+        street_name = test_auto_data_df.loc[person_i,'Street_name']
+        street_type = test_auto_data_df.loc[person_i,'Street_type']
+        suburb = test_auto_data_df.loc[person_i,'Suburb']
         bracket_words = ""
         if "(" in street_name:
             bracket_words = re.findall(r'\((.*?)\)' ,street_name)[0] # extacts all words from the name which are within brackets (e.g. King street (West) will have West extracted)
@@ -120,30 +167,30 @@ def aa_auto_scrape(person_i):
             suburb = suburb.replace("MT", "MOUNT")
 
         # getting the persons birthdate out as a date object (allows us to get the correct format more easily)
-        birthdate = test_auto_data.loc[person_i,'DOB']
+        birthdate = test_auto_data_df.loc[person_i,'DOB']
 
         # formatting the indicidents the individual has had in the last 3 years into an integer (either 0 or 1)
-        if test_auto_data.loc[person_i,'Incidents_last3years_AA'] == "No":
+        if test_auto_data_df.loc[person_i,'Incidents_last3years_AA'] == "No":
             Incidents_3_year = 0
         else:
             Incidents_3_year = 1
 
         # formatting the current insurer information
-        current_insurer = test_auto_data.loc[person_i, "CurrentInsurer"]
+        current_insurer = test_auto_data_df.loc[person_i, "CurrentInsurer"]
         if current_insurer == "No current insurer":
             current_insurer = "NONE"
         else:
             current_insurer = current_insurer.upper()
         
         # formatting the number of additional drivers to drive the car
-        additional_drivers = test_auto_data.loc[person_i, "Additional Drivers"]
+        additional_drivers = test_auto_data_df.loc[person_i, "Additional Drivers"]
         if additional_drivers == "No":
             additional_drivers = 0
         else:
             additional_drivers = 1
 
         # formatting the excess (rounded to the nearest option provided by AA)
-        excess = float(test_auto_data.loc[person_i,'Excess']) # convert into a floating point value (if it is not already one)
+        excess = float(test_auto_data_df.loc[person_i,'Excess']) # convert into a floating point value (if it is not already one)
         excess_options = [400, 500, 750, 1000, 1500, 2500] # defines a list of the acceptable 
         # choose the largest excess option for which the customers desired excess is still larger
         excess_index = 0
@@ -151,7 +198,7 @@ def aa_auto_scrape(person_i):
             excess_index += 1
 
         # formatting whether or not the car is an automatic
-        automatic = test_auto_data.loc[person_i,'Gearbox']
+        automatic = test_auto_data_df.loc[person_i,'Gearbox']
 
         # formatting gearbox info (Number of speeds)
         if " Sp " in  automatic: # if Gearbox starts with 'num Sp ' e.g. (4 Sp ...)
@@ -190,48 +237,48 @@ def aa_auto_scrape(person_i):
 
         
         # formatting the engine size
-        engine_size = "{}".format(round(test_auto_data.loc[person_i,'CC'] / 1000, 1))
+        engine_size = "{}".format(round(test_auto_data_df.loc[person_i,'CC'] / 1000, 1))
 
-        # define a dict to store information for a given person and car for ami
-        aa_data  = {"Cover_type":test_auto_data.loc[person_i,'CoverType'],
-                    "AA_member":test_auto_data.loc[person_i,'AAMember'],
-                    "Registration_number":test_auto_data.loc[person_i,'Registration'],
-                    "Vehicle_year":test_auto_data.loc[person_i,'Vehicle_year'],
-                    "Manufacturer":test_auto_data.loc[person_i,'Manufacturer'],
-                    "Model":str(test_auto_data.loc[person_i,'Model']),
+        # define a dict to store information for a given person and car
+        aa_data  = {"Cover_type":test_auto_data_df.loc[person_i,'CoverType'],
+                    "AA_member":test_auto_data_df.loc[person_i,'AAMember'],
+                    "Registration_number":test_auto_data_df.loc[person_i,'Registration'],
+                    "Vehicle_year":test_auto_data_df.loc[person_i,'Vehicle_year'],
+                    "Manufacturer":test_auto_data_df.loc[person_i,'Manufacturer'],
+                    "Model":str(test_auto_data_df.loc[person_i,'Model']),
                     "Automatic":automatic,
-                    "Body_type":test_auto_data.loc[person_i,'Body'],
+                    "Body_type":test_auto_data_df.loc[person_i,'Body'],
                     "Model_type":model_type,
                     "Model_series":model_series,
                     "Engine_size":engine_size,
                     "Num_speeds":num_speeds.upper(),
                     "Transmission_type_short":transmission_type_short,
                     "Transmission_type_full":transmission_type_full,
-                    "Modifications":test_auto_data.loc[person_i,'Modifications'],
-                    "Finance_purchase":test_auto_data.loc[person_i,'FinancePurchase'],
-                    "Business_use":test_auto_data.loc[person_i,'BusinessUser'],
+                    "Modifications":test_auto_data_df.loc[person_i,'Modifications'],
+                    "Finance_purchase":test_auto_data_df.loc[person_i,'FinancePurchase'],
+                    "Business_use":test_auto_data_df.loc[person_i,'BusinessUser'],
                     "Street_address": f"{house_number} {street_name} {street_type} {bracket_words}",
                     "Street":f"{street_name} {bracket_words}",
                     "Suburb":suburb.strip(),
-                    "Postcode":test_auto_data.loc[person_i,'Postcode'],
+                    "Postcode":test_auto_data_df.loc[person_i,'Postcode'],
                     "Birthdate_day":int(birthdate.strftime("%d")),
                     "Birthdate_month":birthdate.strftime("%B"),
                     "Birthdate_year":int(birthdate.strftime("%Y")),
-                    "Sex":test_auto_data.loc[person_i,'Gender'],
+                    "Sex":test_auto_data_df.loc[person_i,'Gender'],
                     "Incidents_3_year":Incidents_3_year,
                     "Current_insurer":current_insurer,
                     "Additional_drivers":additional_drivers,
-                    "Agreed_value":str(int(round(test_auto_data.loc[person_i,'AgreedValue']))), # rounds the value to nearest whole number, converts to an integer then into a sting with no dp
+                    "Agreed_value":str(int(round(test_auto_data_df.loc[person_i,'AgreedValue']))), # rounds the value to nearest whole number, converts to an integer then into a sting with no dp
                     "Excess_index":excess_index
                     }
         
         
-        # adding info on the date and type of incident to the ami_data dictionary ONLY if the person has had an incident within the last 5 years
-        incident_date = test_auto_data.loc[person_i,'Date_of_incident']
+        # adding info on the date and type of incident to the aa_data dictionary ONLY if the person has had an incident within the last 5 years
+        incident_date = test_auto_data_df.loc[person_i,'Date_of_incident']
         if aa_data["Incidents_3_year"] == 1:
             aa_data["Incident_date_month"] = incident_date.strftime("%B")
             aa_data["Incident_date_year"] = int(incident_date.strftime("%Y"))
-            incident_type = test_auto_data.loc[person_i,'Type_incident'].lower()
+            incident_type = test_auto_data_df.loc[person_i,'Type_incident'].lower()
             aa_data["Incident_type"] = "" # initialise "Incident type variable"
             if "not at fault" in incident_type or "no other vehicle involved" in incident_type: # if the accident was not at fault and the accident did not involve another vehicle
                 aa_data["Incident_type"] = "Any claims where no excess was payable" # mapped 'Not at fault -other vehicle involved' to this
@@ -300,25 +347,60 @@ def aa_auto_scrape(person_i):
             
             ## choosing the remaining option with the least number of characters
             final_car_variant = car_variant_options[0] # initialising the final variant option to the 1st remaining
-            
-            #print(f"\n{car_variant_options[0].text}") # print for debugging
+
+            aa_output_df.loc[person_i, "AA_Error_code"] = "Several Car Variant Options Warning"
 
             # iterating through all other options to find one with least number of characters
             for car_variant in car_variant_options[1:]:
 
-                #print(car_variant.text) # print out all remaining options, for checking
-
                 if len(car_variant.text) < len(final_car_variant.text):
                     final_car_variant = car_variant
-            
-            '''
-            print() # print just a newline character
 
-            # printing a message to notify what is happened
-            print(f"SELECTED: {final_car_variant.text}. ACTUAL: {data["Vehicle_year"]} {data["Manufacturer"]} {data["Model"]} {data["Model_type"]}" + 
-                  f"{data["Model_series"]} with body type {data["Body_type"]} and {data["Num_speeds"]} {data["Automatic"]} and {data["Engine_size"]}L engine", end=" - ")
-            '''
             return final_car_variant
+
+        def input_agreed_value():
+            agreed_value_input = driver.find_element(By.ID, "amountCoveredInput") # find the element to input agreed value into
+            agreed_value_input.send_keys(str(10*9)) # input 1 billion (a number that is way too large so we can always scrape the limits)
+
+            # scrapes the aa accepted limits
+            Wait.until(EC.visibility_of_element_located( (By.XPATH, "//*[@id='*.errors']/div[2]/ul/li") )) # checks if the error message, that says agreed value is invalid, is present
+            agreed_value_limits_list = driver.find_elements(By.XPATH, "//*[@id='*.errors']/div[2]/ul/li/strong[@class='numeric']") # scrapes the min and max values for the agreed value
+
+            limits = [0, 0] # initialise limits list, to store values for the agreed value min and max for a given car
+
+            # pulls out the agreed value limits as integers and saves to limits list
+            for i in range(2):
+                limits[i] = int(agreed_value_limits_list[i].text.replace(",", "")) 
+
+            aa_output_df.loc[person_i, "AA_agreed_value_minimum"] = limits[0] # save the minimum allowed agreed value
+            aa_output_df.loc[person_i, "AA_agreed_value_maximum"] = limits[1] # save the maximum allowed agreed value
+
+            # rounds up/down if the agreed value isnt within the limits
+            if int(data["Agreed_value"]) > limits[1]: # if the entered agreed value is greater than the maximum value aa allows
+                data["Agreed_value"] = limits[1] # save the new 'adjusted agreed value'
+                print("Attempted to input agreed value larger than the maximum", end=" - ")
+
+            elif int(data["Agreed_value"]) < limits[0]: # if the entered agreed value is smaller than the minimum value aa allows
+                data["Agreed_value"] = limits[0] # save the new 'adjusted agreed value'
+                print("Attempted to input agreed value smaller than the minimum", end=" - ")
+
+            # output the corrected agreed value
+            aa_output_df.loc[person_i, "AA_agreed_value"] = data["Agreed_value"]
+
+            # input the amount covered (Agreed Value)
+            agreed_value_input = driver.find_element(By.ID, "amountCoveredInput") # find the element to input agreed value into
+            agreed_value_input.clear() # clear current values
+
+            time.sleep(1) # wait for page to load
+
+            agreed_value_input.send_keys(data["Agreed_value"]) # input the desired value
+        
+            time.sleep(2) # wait for page to load
+
+            
+        
+
+
 
         # Open the webpage
         driver.get("https://online.aainsurance.co.nz/motor/pub/aainzquote?insuranceType=car")
@@ -418,7 +500,7 @@ def aa_auto_scrape(person_i):
             try:
                 Wait.until(EC.presence_of_element_located((By.ID, "jeopardy")))
                 print("We need a bit more information to progress with your quote (requires calling in)", end= " -- ")
-                return None
+                return "Tech-error page"
             except exceptions.TimeoutException:
                 print("Unknown issue (from modifactions code section))", end=" -- ")
                 return None
@@ -521,52 +603,13 @@ def aa_auto_scrape(person_i):
 
         try:
             Wait.until(EC.presence_of_element_located( (By.ID, "techError") )) # if we went to the 'tech error' page (Says  "Sorry our online service is temporarily unavailable" everytime for this car/person)
-            print("Tech-error page", end=" - ")
-            return None # we exit this option if the error page comes up (we cannot scrape for this person/car)
+            print("We need a bit more information to progress with your quote (requires calling in)", end=" - ")
+            return "Tech-error page" # we exit this option if the error page comes up (we cannot scrape for this person/car)
         except exceptions.TimeoutException:
             pass
 
-        # input the amount covered (Agreed Value)
-        agreed_value_input = driver.find_element(By.ID, "amountCoveredInput") # find the element to input agreed value into
-        agreed_value_input.clear() # clear current values
-
-        time.sleep(1) # wait for page to load
-
-        agreed_value_input.send_keys(data["Agreed_value"]) # input the desired value
-
-        time.sleep(1) # wait for page to load
-
-        # checks the agreed value is within the aa accepted limits, rounds up/down if it isnt within the limits
-        try:
-            Wait.until(EC.visibility_of_element_located( (By.XPATH, "//*[@id='*.errors']/div[2]/ul/li") )) # checks if the error message, that says agreed value is invalid, is present
-            agreed_value_limits_list = driver.find_elements(By.XPATH, "//*[@id='*.errors']/div[2]/ul/li/strong[@class='numeric']") # scrapes the min and max values for the agreed value
-
-            limits = [0, 0] # initialise limits list, to store values for the agreed value min and max for a given car
-
-            # pulls out the agreed value limits as integers and saves to limits list
-            for i in range(2):
-                limits[i] = int(agreed_value_limits_list[i].text.replace(",", "")) 
-            
-            agreed_value_input.clear() # clears the input space to allow us to replace
-            
-            time.sleep(1) # wait for page to load
-
-            if int(data["Agreed_value"]) > limits[1]: # if the entered agreed value is greater than the maximum value aa allows
-                agreed_value_input.send_keys(limits[1]) # input the maximum allowed value
-                adjusted_agreed_value = limits[1] # save the new 'adjusted agreed value'
-                aa_output_df.loc[person_i, "AA_agreed_value_was_adjusted"] = 1 # save this value to say that the agreed value was adjusted upwards
-                print("Attempted to input agreed value larger than the maximum", end=" - ")
-
-            elif int(data["Agreed_value"]) < limits[0]: # if the entered agreed value is smaller than the minimum value aa allows
-                agreed_value_input.send_keys(limits[0]) # input the minimum allowed value
-                adjusted_agreed_value = limits[0] # save the new 'adjusted agreed value'
-                aa_output_df.loc[person_i, "AA_agreed_value_was_adjusted"] = -1 # save this value to say that the agreed value was adjusted downwards
-                print("Attempted to input agreed value smaller than the minimum", end=" - ")
-
-        except exceptions.TimeoutException:
-            pass
-        
-        time.sleep(2) # wait for page to load
+        # calls a function to input the agreed value
+        input_agreed_value()
 
         # clicks the persons desired excess level
         Wait.until(EC.element_to_be_clickable( (By.XPATH, "//*[@id='excessContainer']/label[{}]".format(data["Excess_index"])) )).click()
@@ -598,7 +641,7 @@ def aa_auto_scrape(person_i):
     try:
         # scrapes the insurance premium for a single vehicle and person at aa
         aa_auto_premium = aa_auto_scrape_premium(aa_auto_data_format(person_i)) 
-        if aa_auto_premium != None: # if an actual result is returned
+        if aa_auto_premium != None and aa_auto_premium != "Tech-error page": # if an actual result is returned
 
             # print the scraping results
             print( aa_auto_premium[0],  aa_auto_premium[1], end =" -- ")
@@ -606,43 +649,35 @@ def aa_auto_scrape(person_i):
             # save the scraped premiums to the output dataset
             aa_output_df.loc[person_i, "AA_monthly_premium"] = aa_auto_premium[0] # monthly
             aa_output_df.loc[person_i, "AA_yearly_premium"] = aa_auto_premium[1] # yearly
+        elif aa_auto_premium == "Tech-error page":
+            aa_output_df.loc[person_i, "AA_Error_code"] = "Webiste Does Not Quote For This Car Variant"
+        else:
+            aa_output_df.loc[person_i, "AA_Error_code"] = "Unknown Error"
 
     except:
         try: # checks if the reason our code failed is because the 'we need more information' pop up appeareds
             Wait.until(EC.visibility_of_element_located( (By.XPATH, "//*[@id='ui-id-3' and text() = 'We need more information']") ) )
             print("Need more information", end= " -- ")
+            aa_output_df.loc[person_i, "AA_Error_code"] = "Webiste Does Not Quote For This Car Variant"
         except exceptions.TimeoutException:
             print("Unknown Error!!", end= " -- ")
+            aa_output_df.loc[person_i, "AA_Error_code"] = "Unknown Error"
 
     end_time = time.time() # get time of end of each iteration
     print("Elapsed time:", round(end_time - start_time,2)) # print out the length of time taken
 
 
 def auto_scape_all():
-    # read in the data
-    global test_auto_data
-    test_auto_data = pd.read_excel(test_auto_data_xlsx, dtype={"Postcode":"int"})
+    # performing all data reading in and preprocessing
+    dataset_preprocess()
 
-    # sets all values of the policy start date to be today's date
-    for key in test_auto_data:
-        test_auto_data['PolicyStartDate'] = datetime.strftime(date.today(), "%d/%m/%Y")
-
-    # pads out the front of postcodes with zeroes (as excel removes leading zeros)
-    test_auto_data['Postcode'] = test_auto_data['Postcode'].apply(postcode_reformat) 
-    
-    # creates a new dataframe to save the scraped info
-    global aa_output_df
-    aa_output_df = test_auto_data.loc[:, ["Sample Number", "PolicyStartDate"]]
-    aa_output_df["AA_agreed_value"] = test_auto_data.loc[:, "AgreedValue"]
-    aa_output_df["AA_monthly_premium"] = ["-1"] * len(test_auto_data)
-    aa_output_df["AA_yearly_premium"] = ["-1"] * len(test_auto_data)
-    aa_output_df["AA_agreed_value_was_adjusted"] = [0] * len(test_auto_data)
-
-    # save the number of cars in the dataset as a variable (reading it from the standard input that the 'parent' process passes in)
-    num_cars = int(input())
+    # save the start index and the number of cars in the dataset as a variable (reading it from the standard input that the 'parent' process passes in)
+    input_indexes = input()
+    input_indexes = input_indexes.replace("[", "").replace("]", "").split(",")
+    input_indexes = list(map(int, input_indexes))
 
     # loop through all cars in test spreadsheet
-    for person_i in range(0, num_cars): 
+    for person_i in input_indexes: 
 
         print(f"{person_i}: AA: ", end = "") # print out the iteration number
 
@@ -659,7 +694,7 @@ def auto_scape_all():
                 load_webdriver() # open a new webdriver session
     
 
-    export_auto_dataset(num_cars)
+    export_auto_dataset(input_indexes)
 
 
 
