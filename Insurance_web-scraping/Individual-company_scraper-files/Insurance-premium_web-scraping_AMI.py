@@ -17,6 +17,9 @@ import re
 import os
 import sys
 
+# importing for more natural string comparisons
+from fuzzywuzzy import fuzz
+
 
 ## setting the working directory to be the folder this file is located in
 # Get the absolute path of the current Python file
@@ -134,6 +137,15 @@ def ami_auto_scrape(person_i):
 
     # defining a function which take the information from the spreadsheet and formats it so it can be used to scrape premium from ami website
     def ami_auto_data_format(person_i):
+        # formatting model type
+        model_type = test_auto_data_df.loc[person_i,'Type']
+
+        # setting NA values to an empty string
+        if pd.isna(model_type):
+            model_type = ""
+        else:
+            model_type = str(model_type)
+
         # formatting model series
         model_series = test_auto_data_df.loc[person_i,'Series']
 
@@ -142,6 +154,28 @@ def ami_auto_scrape(person_i):
             model_series = ""
         else:
             model_series = str(model_series)
+
+        # formatting gearbox info (what transmission type)
+        automatic = test_auto_data_df.loc[person_i,'Gearbox']
+
+        if "Constantly Variable Transmission" in automatic or "CVT" in automatic:
+            automatic = "Constantly Variable"  
+        elif "Manual" in automatic: 
+            automatic = "Manual" 
+        elif "Automatic" in automatic or "DSG": # all the different types of automatic transmissions (from the test excel spreadsheeet) and how they are labeled
+            automatic = "Automatic" 
+        else:
+            automatic = "Other" # for all other gearboxes (e.g. reduction gear in electric)
+
+        # formatting the type of pertro, the car accepts
+        petrol_type = test_auto_data_df.loc[person_i,'Gas']
+        
+        if "petrol" in petrol_type.lower():
+            petrol_type = "Petrol"
+        elif "diesel" in petrol_type.lower():
+            petrol_type = "Diesel"
+        else:
+            petrol_type = "Electric"
 
         # formatting street name and type into the correct format
         street_name = test_auto_data_df.loc[person_i,'Street_name']
@@ -155,7 +189,7 @@ def ami_auto_scrape(person_i):
         # formatting car model type
         model = test_auto_data_df.loc[person_i,'Model']
         if model == "C":
-            model += str(int(math.ceil(test_auto_data_df.loc[person_i,'CC']/100))) # add on the number of '10 times litres' in the engine
+            model += f"{math.ceil(test_auto_data_df.loc[person_i,'CC']/100)}"  # add on the number of '10 times litres' in the engine
 
         # getting the persons birthdate out as a date object (allows us to get the correct format more easily)
         birthdate = test_auto_data_df.loc[person_i,'DOB']
@@ -194,11 +228,13 @@ def ami_auto_scrape(person_i):
         ami_data = {"Registration_number":test_auto_data_df.loc[person_i,'Registration'],
                     "Manufacturer":test_auto_data_df.loc[person_i,'Manufacturer'],
                     "Model":model,
-                    "Model_type":test_auto_data_df.loc[person_i,'Type'],
+                    "Model_type":model_type,
                     "Model_series":model_series,
                     "Vehicle_year":test_auto_data_df.loc[person_i,'Vehicle_year'],
                     "Body_type":test_auto_data_df.loc[person_i,'Body'].upper(),
-                    "Engine_size":"{}cc".format(int(test_auto_data_df.loc[person_i,'CC'])),
+                    "Engine_size":f"{math.ceil(test_auto_data_df.loc[person_i,'CC'])}cc/{round(test_auto_data_df.loc[person_i,'CC']/100)/10}L",
+                    "Automatic":automatic,
+                    "Petrol_type":petrol_type,
                     "Immobiliser":test_auto_data_df.loc[person_i,'Immobiliser_alarm'],
                     "Business_use":test_auto_data_df.loc[person_i,'BusinessUser'],
                     "Unit":test_auto_data_df.loc[person_i,'Unit_number'],
@@ -237,10 +273,30 @@ def ami_auto_scrape(person_i):
     def ami_auto_scrape_premium(data):
 
         # defining a function to select the correct model variant
-        def select_model_variant():
+        def select_model_variant(db_car_details = f"{data["Manufacturer"]} {data["Model"]} {data["Vehicle_year"]} {data["Body_type"]} {data["Model_type"]} {data["Model_series"]} {data["Automatic"]} {data["Engine_size"]} {data["Petrol_type"]}",
+                                  xpath = '//*[@id="searchByMMYResult"]/div[2]/span'):
+            
             # scraping these details from the webpage
-            car_variant_options = tuple(driver.find_elements(By.XPATH, '//*[@id="searchByMMYResult"]/div[2]/span'))
+            car_variant_options = tuple(driver.find_elements(By.XPATH, xpath))
 
+            # get a list of the similarity scores of our car variant option, compared with the string summarising the info from the database
+            car_variant_accuracy_score = [fuzz.partial_token_sort_ratio(db_car_details, option.text) for option in car_variant_options]
+
+            # save the highest accuarcy score
+            max_value = max(car_variant_accuracy_score)
+
+            # get the car variant option(s) that match the data the best
+            car_variant_options = [car_variant_options[index] for index, score in enumerate(car_variant_accuracy_score) if score == max_value]
+
+            if len(car_variant_options) > 1:
+                print("Unable to fully narrow down", end=" - ")
+                ami_output_df.loc[person_i, "AMI_Error_code"] = "Several Car Variant Options Warning"
+            
+            # return the (1st) best matching car variant option
+            return car_variant_options[0]
+
+
+            '''
             # define the specifications list, in the order that we want to use them to filter out incorrect car variant options
             specifications_list = ["Model_type", "Model_series", "Engine_size"]
 
@@ -287,7 +343,7 @@ def ami_auto_scrape(person_i):
                     final_car_variant = car_variant
             
             return final_car_variant
-
+            '''
 
         # Open the webpage
         driver.get("https://secure.ami.co.nz/css/car/step1")
@@ -355,8 +411,6 @@ def ami_auto_scrape(person_i):
                 print("CANNOT FIND {year} {manufacturer} {model} WITH BODY TYPE {body_type}".format(year = data["Vehicle_year"], manufacturer = data["Manufacturer"], model = data["Model"], body_type = data["Body_type"]), end=" -- ")
                 return None # return None if can't scrape
 
-
-
             # inputting car engine size
             try:
                 Wait.until_not(lambda x: x.find_element(By.ID, "searchByMMYLoading").is_displayed()) # wait until the "loading element" is not being displayed
@@ -366,20 +420,18 @@ def ami_auto_scrape(person_i):
                 print("CANNOT FIND {year} {manufacturer} {model} {body_type}, WITH {engine_size}".format(year = data["Vehicle_year"], manufacturer = data["Manufacturer"], model = data["Model"], body_type = data["Body_type"], engine_size = data["Engine_size"]), end=" -- ")
                 return None # return None if can't scrape
             time.sleep(1) # wait for page to process information
-            
-        # select the final vehicle option
-        try:
-            if pd.isna(data["Model_type"]):
-                raise Exception("NA Model_type") # if the model type is NA we raise an exception, thus going to bottom except block (which it just clicks first option)
 
-            # select the correct model variant
+            # select the correct model variant for cases where we had to input the car details
             selected_model_variant_element = select_model_variant()
 
-            # click the selected model variant
-            selected_model_variant_element.click()
+        else: # for cases where inputting the registration number was successful
+            # select the correct model variant
+            selected_model_variant_element = select_model_variant(xpath='//*[@id="searchbyRegNoResult"]/div[2]/span')
 
-        except: # Selects the 1st option, if a Model type is not specified
-            Wait.until(EC.element_to_be_clickable( (By.ID,  "searchedVehicleSpan_0"))).click() # wait until clickable, then click button to select final vehicle option
+        # click the selected model variant
+        selected_model_variant_element.click()
+
+
                 
         # selects whether or not the car has an immobiliser
         try: # we 'try' this because the option to select Immobiliser only comes up on some cars (if there are some models of the car which don't)

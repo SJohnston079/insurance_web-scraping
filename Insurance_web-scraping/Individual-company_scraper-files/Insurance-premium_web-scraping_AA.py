@@ -308,7 +308,7 @@ def aa_auto_scrape(person_i):
         def select_model_variant():
             # scraping these details from the webpage
             car_variant_options = tuple(driver.find_elements(By.XPATH, "//*[@id='vehicleList']/tr"))
-
+            
             # define the specifications list, in the order that we want to use them to filter out incorrect car variant options
             specifications_list = ["Model_type", "Model_series", "Engine_size", "Num_speeds", "Transmission"]
 

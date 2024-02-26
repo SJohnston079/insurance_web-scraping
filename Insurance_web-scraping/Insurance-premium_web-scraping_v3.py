@@ -60,7 +60,7 @@ def export_auto_dataset(num_cars):
     output_df = test_auto_data.head(num_cars)
 
     # set the policy start date to be equal to be todays date (as all of the individual company dfs have the polciy start date as todays date)
-    output_df.loc["PolicyStartDate"] = individual_company_dfs["AA"]["PolicyStartDate"]
+    output_df.loc[:, 'PolicyStartDate'] = individual_company_dfs['AA']['PolicyStartDate'].values[0]
 
     # removing columns from the individual company dfs that we dont want in the final output
     individual_company_dfs = [individual_company_dfs[company].drop(["PolicyStartDate", f"{company}_agreed_value"], axis=1) for company in insurance_companies]
@@ -71,7 +71,7 @@ def export_auto_dataset(num_cars):
     # export the dataframe to the csv
     output_df.to_csv("scraped_auto_premiums.csv", index=False) 
 
-# defining a function to run a single subprocess
+# defining a function to run a single subprocess, is called by 'running_the_subprocesses'
 def run_subprocess(args):
     # saving the arguments as more intuitive names
     company, row_indexes = args[0], args[1]
@@ -83,7 +83,16 @@ def run_subprocess(args):
 # defining a function to run all the subprocesses
 def runnning_the_subprocesses(indexes):
     # defining the arugments to be passed down into the subprocesses
-    args = [(company, indexes[company]) for company in insurance_companies if len(indexes[company]) > 0]
+    args = []
+    for company in insurance_companies:
+        if len(indexes[company]) > 0:
+            # if there are at least 2 row to scrape for tower, split tower into 2 seperate processes
+            if company == "Tower" and len(indexes["Tower"]) >= 2:
+                midpoint = (len(indexes["Tower"]) + 1) // 2
+                args.append( ("Tower", indexes["Tower"][:midpoint]) )
+                args.append( ("Tower", indexes["Tower"][midpoint:]) )
+            else:
+                args.append((company, indexes[company]))
 
     # Start all the processes
     with multiprocessing.Pool() as pool:
@@ -147,7 +156,7 @@ def redo_changed_agreed_value(start_i, end_i):
     # redo all of the scrapes where the agreed value was inconsistent
     runnning_the_subprocesses(redo_scrape_args)
 
-# define a function to go back over all the examples where the agreed value was changed, as redo the scraping for the other companies, to ensure all have the same agreed value
+# define a function to go and attempt to scrape from all the examples where there was an error that might be fixable
 def redo_website_scrape_errors(start_i, end_i):
     # checks if the agreed values were changed on any of the companies. If they were returns the row number
     def find_fixable_errors(company):
@@ -185,12 +194,12 @@ def auto_scape_all():
 
 
     # saving the length of test_auto_data as num_cars
-    num_cars = 10
+    num_cars = 50
     #num_cars = len(test_auto_data)
 
     # estimate the number of seconds testing all cars on each company website will take
-    approximate_total_times = [(time * num_cars) for time in [46, 40, 65]]
-    total_time_hours = max(approximate_total_times)*1.2 / 3600 # convert seconds to hours for the estimated longest time
+    approximate_total_times = [(time * num_cars) for time in [46, 40, 70/2]]
+    total_time_hours = max(approximate_total_times)*1.25 / 3600 # convert seconds to hours for the estimated longest time
     total_time_minutes = round((total_time_hours - int(total_time_hours)) * 60) # reformat into minute and hours
     total_time_hours = math.floor(total_time_hours)
 
@@ -203,7 +212,7 @@ def auto_scape_all():
 
     # running all of the subprocesses (starting scraping from all website simultaneously)
     runnning_the_subprocesses(indexes)
-
+    
     # for all errors that are potentially still scrapable, attempt to scrape again (to fix)
     redo_website_scrape_errors(0, num_cars)
 

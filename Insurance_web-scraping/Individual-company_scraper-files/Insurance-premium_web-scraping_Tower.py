@@ -17,6 +17,9 @@ import re
 import os
 import sys
 
+# importing for more natural string comparisons
+from fuzzywuzzy import fuzz
+
 
 ## setting the working directory to be the folder this file is located in
 # Get the absolute path of the current Python file
@@ -263,6 +266,15 @@ def tower_auto_scrape(person_i):
             # Open the webpage
             driver.get("https://my.tower.co.nz/quote/car/page1")
 
+            # Checks if the "More info required" popup is present
+            try:
+                Wait.until(EC.visibility_of_element_located((By.XPATH, '//*[@id="recaptchaDialog"]/section/div/h5[text()="More info required!"]')))
+            except:
+                pass
+            else:
+                driver.refresh()
+            
+
             # wait for page to load
             time.sleep(3)
 
@@ -274,10 +286,29 @@ def tower_auto_scrape(person_i):
             else:
                 Wait10.until(EC.element_to_be_clickable( (By.ID, "btnvehicleUsedForBusiness-2") )).click() # clicks "Sometimes" business use button
 
-        def select_model_variant():
-            # scraping these details from the webpage
-            car_variant_options = tuple(driver.find_elements(By.XPATH, '//*[@id="carVehicleTypes-menu-list"]/li'))
+        def select_model_variant(db_car_details = f"{data["Model_type"]} {data["Model_series"]} {data["Body_type"]} {data["Automatic"]} {data["Num_speeds"]} {data["Engine_size"]}",\
+                                xpath = '//*[@id="carVehicleTypes-menu-list"]/li'):
 
+            # scraping these details from the webpage
+            car_variant_options = tuple(driver.find_elements(By.XPATH, xpath))
+            
+            # get a list of the similarity scores of our car variant option, compared with the string summarising the info from the database
+            car_variant_accuracy_score = [fuzz.partial_token_sort_ratio(db_car_details, option.text) for option in car_variant_options]
+
+            # save the highest accuarcy score
+            max_value = max(car_variant_accuracy_score)
+
+            # get the car variant option(s) that match the data the best
+            car_variant_options = [car_variant_options[index] for index, score in enumerate(car_variant_accuracy_score) if score == max_value]
+
+            if len(car_variant_options) > 1:
+                print("Unable to fully narrow down", end=" - ")
+                tower_output_df.loc[person_i, "Tower_Error_code"] = "Several Car Variant Options Warning"
+            
+            # return the (1st) best matching car variant option
+            return car_variant_options[0]
+
+            '''
             # define the specifications list, in the order that we want to use them to filter out incorrect car variant options
             specifications_list = ["Model_series", "Engine_size", "Num_speeds", "Automatic"]
 
@@ -320,7 +351,7 @@ def tower_auto_scrape(person_i):
                     final_car_variant = car_variant
             
             return final_car_variant
-
+            '''
 
         # attempt to click business use button
         try: # if error go to except
@@ -329,9 +360,6 @@ def tower_auto_scrape(person_i):
             # if we cannot click the business use button, close and reopen the page
             driver.quit() # quit this current driver
             load_webdriver() # open a new webdriver session
-
-            # Open the webpage
-            driver.get("https://my.tower.co.nz/quote/car/page1") 
 
             try: # if error go to except
                 handle_business_use_button()
@@ -366,33 +394,22 @@ def tower_auto_scrape(person_i):
                 except exceptions.TimeoutException: # if the carLookupError pop up appears
                     raise ValueError("Registration_Invalid")
 
+                # try to select the correct model variant from a pop down list of options
                 try:
+                    model_variant_element = select_model_variant(db_car_details=f"{data["Manufacturer"]} {data["Model"]} {data["Vehicle_year"]} {data["Model_type"]} {data["Model_series"]} {data["Body_type"]} {data["Automatic"]} {data["Num_speeds"]} {data["Engine_size"]}",
+                                                                  xpath = '//*[@id="questionCarLookup"]/div[4]/div[2]/fieldset/div')
+                    model_variant_element.click()
+                except: # if the list of options is not present, check if the correct car model has been already selected
 
                     # find the elements which lists the cars details, after having input the registration number
                     registration_found_car = Wait10.until(EC.presence_of_element_located((By.XPATH, "//*[@id='questionCarLookup']/div[4]/div[@class='car-results']")) )
-                    registration_found_car_text = registration_found_car.text
-
-                    # if the car manufacturer, model, body type and year of production are not correct, then enter details manually
-                    if not ((str(data["Manufacturer"]) in registration_found_car_text) and (str(data["Model"]) in registration_found_car_text) and (str(data["Body_type"]) in registration_found_car_text) and (str(data["Vehicle_year"]) in registration_found_car_text)):
-                        raise ValueError("Car found by registration number is incorrect!")
                     
-                    # if the car model type, transmission type, number of speeds and engine size (num of litres) are not correct, then enter details manually
-                    extra_registration_found_car_text = registration_found_car.find_element(By.XPATH, ".//p").text
-                    if not ( (str(data["Model_type"]) in extra_registration_found_car_text) and (str(data["Automatic"]) in extra_registration_found_car_text) and (str(data["Num_speeds"]) in extra_registration_found_car_text) and (str(data["Engine_size"]) in extra_registration_found_car_text) ):
-                        raise Exception("Car found by registration number has several options")
+                    # constructing a string to represent the car details from the input data
+                    db_car_details = f"{data["Manufacturer"]} {data["Model"]} {data["Body_type"]} {data["Vehicle_year"]} {data["Model_type"]} {data["Model_series"]} {data["Automatic"]} {data["Num_speeds"]} {data["Engine_size"]}"
 
-                except: # if the car information automatically found (by entering license plate) is false, then go check if options box is present
-
-                    # try to select correct option 
-                    try:
-                        # clicking the button which has the correct model type information, as well as the correct Gearbox (Automatic and Num_speeds) as well as Engine_Size
-                        Wait.until(EC.element_to_be_clickable( (By.XPATH, f"//*[@id='questionCarLookup']/div[4]/div[2]/fieldset/div/label/span[contains(text(), '{data["Model_type"]}') and " + 
-                                                            f"contains(text(), '{data["Automatic"]}') and " + 
-                                                            f"contains(text(), '{data["Num_speeds"]}') and " +
-                                                            f"contains(text(), '{data["Engine_size"]}')]") )).click()
-                    except exceptions.TimeoutException: # if the options box not present, then enter the details manually
-                        Wait.until(EC.element_to_be_clickable( (By.ID, "lnkEnterMakeModel") )).click() # Find the button "Enter your car's details" and click it
-                        raise ValueError("Car information incorrect")
+                    # check the similarity between the details on the website and the actual car details in the database, if similarly is not over 90% then enter details manually
+                    if fuzz.token_set_ratio(db_car_details, registration_found_car.text) < 0.9:
+                        raise ValueError("Car found by registration number is incorrect!")
 
 
         except ValueError: # if the registration is invalid or not provided, then need to enter car details manually
@@ -465,8 +482,6 @@ def tower_auto_scrape(person_i):
             car_model_type_text_input = Wait.until(EC.presence_of_element_located((By.ID, "carVehicleTypes"))) # find the model type input box and then input the model type
             if car_model_type_text_input.get_attribute("value") == "": # checks the input fields value is currently empty
                 car_model_type_text_input.send_keys(data["Model_type"]) # inputs the body type
-
-                time.sleep(10000)
 
                 # select the correct model variant
                 selected_model_variant_element = select_model_variant()
