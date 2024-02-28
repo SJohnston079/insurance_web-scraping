@@ -87,6 +87,12 @@ def dataset_preprocess():
     global test_auto_data_df
     test_auto_data_df = pd.read_csv(test_auto_data_csv, dtype={"Postcode":"int"})
 
+    # setting all NA values in string columns to to be an empty string
+    test_auto_data_df.loc[:,["Registration", "Type", "Series", "Unit_number", "Street_number", "Street_name", "Street_type", "Suburb", "City", "Licence", "NZ_citizen_or_resident", "Visa_at_least_1_year", "Gender", "FinancePurchase", "Incidents_last2years_TOWER", "Incidents_last3years_AA", "Incidents_last5years_AMISTATE"]] = test_auto_data_df.loc[:,["Registration", "Type", "Series", "Unit_number", "Street_number", "Street_name", "Street_type", "Suburb", "City", "Licence", "NZ_citizen_or_resident", "Visa_at_least_1_year", "Gender", "FinancePurchase", "Incidents_last2years_TOWER", "Incidents_last3years_AA", "Incidents_last5years_AMISTATE"]].fillna("")
+
+    # setting some variables to be string types
+    test_auto_data_df.loc[:,"AgreedValue"] = test_auto_data_df.loc[:,"AgreedValue"].astype(str)
+
     # sets all values of the policy start date to be today's date
     for key in test_auto_data_df:
         test_auto_data_df['PolicyStartDate'] = datetime.strftime(date.today(), "%d/%m/%Y")
@@ -133,29 +139,20 @@ def load_webdriver():
 def aa_auto_scrape(person_i):
     # defining a function which take the information from the spreadsheet and formats it so it can be used to scrape premium from aa website
     def aa_auto_data_format(person_i):
+
         # formatting model type
         model_type = test_auto_data_df.loc[person_i,'Type']
 
-        # setting NA values to be an empty string
-        if pd.isna(model_type):
-            model_type = ""
-        elif "XL Dual Cab" in model_type:
+        if "XL Dual Cab" in model_type:
             model_type = model_type.replace("Dual", "Double").upper()
         else:
-            model_type = str(model_type).upper()
+            model_type = model_type.upper()
 
-        # formatting model series
+        # formatting model series as a string
         model_series = test_auto_data_df.loc[person_i,'Series']
 
-        # setting NA values to an empty string
-        if pd.isna(model_series):
-            model_series = ""
-        else:
-            model_series = str(model_series)
-
-
         # getting the street address
-        house_number = remove_non_numeric( str(test_auto_data_df.loc[person_i,'Street_number']) ) # removes all non-numeric characters from the house number (e.g. removes A from 14A)
+        house_number = remove_non_numeric( test_auto_data_df.loc[person_i,'Street_number'] ) # removes all non-numeric characters from the house number (e.g. removes A from 14A)
         street_name = test_auto_data_df.loc[person_i,'Street_name']
         street_type = test_auto_data_df.loc[person_i,'Street_type']
         suburb = test_auto_data_df.loc[person_i,'Suburb']
@@ -202,7 +199,7 @@ def aa_auto_scrape(person_i):
 
         # formatting gearbox info (Number of speeds)
         if " Sp " in  automatic: # if Gearbox starts with 'num Sp ' e.g. (4 Sp ...)
-            num_speeds = str(automatic[0])
+            num_speeds = automatic[0]
         else:
             num_speeds = "" # if the number of speeds is not stated, set it to an empty string
 
@@ -237,7 +234,7 @@ def aa_auto_scrape(person_i):
 
         
         # formatting the engine size
-        engine_size = "{}".format(round(test_auto_data_df.loc[person_i,'CC'] / 1000, 1))
+        engine_size = "{}".format(round(float(test_auto_data_df.loc[person_i,'CC']) / 1000, 1))
 
         # define a dict to store information for a given person and car
         aa_data  = {"Cover_type":test_auto_data_df.loc[person_i,'CoverType'],
@@ -268,7 +265,7 @@ def aa_auto_scrape(person_i):
                     "Incidents_3_year":Incidents_3_year,
                     "Current_insurer":current_insurer,
                     "Additional_drivers":additional_drivers,
-                    "Agreed_value":str(int(round(test_auto_data_df.loc[person_i,'AgreedValue']))), # rounds the value to nearest whole number, converts to an integer then into a sting with no dp
+                    "Agreed_value":str(round(float(test_auto_data_df.loc[person_i,'AgreedValue']))), # rounds the value to nearest whole number, converts to an integer then into a sting with no dp
                     "Excess_index":excess_index
                     }
         
@@ -423,7 +420,7 @@ def aa_auto_scrape(person_i):
 
         # attempt to input the car registration number (if it both provided and valid)
         try: 
-            if pd.isna(data["Registration_number"]): # if the vehicle registration number is NA then raise an exception (go to except block, skip rest of try)
+            if data["Registration_number"] == "": # if the vehicle registration number is NA then raise an exception (go to except block, skip rest of try)
                 raise Exception("Registration_NA")
             else:
                 driver.find_element(By.ID, "vehicleRegistrationNumberNz").send_keys(data["Registration_number"]) # input registration number
@@ -435,7 +432,7 @@ def aa_auto_scrape(person_i):
                 Wait.until(EC.visibility_of_element_located( (By.ID,  "vehicleDetailSummaryBoxAlt")))
         except: # if the registration is invalid or not provided, then need to enter car details manually
                 
-                if pd.isna(data["Registration_number"]): # if the vehicle registration number is NA then we need to click this button (else if the registration number is just invalid we dont)
+                if data["Registration_number"] == "": # if the vehicle registration number is NA then we need to click this button (else if the registration number is just invalid we dont)
                     Wait10.until(EC.element_to_be_clickable((By.ID, "modelSelector-button")) ).click() # click Model Selector button
 
                 try:
@@ -655,13 +652,13 @@ def aa_auto_scrape(person_i):
             aa_output_df.loc[person_i, "AA_Error_code"] = "Unknown Error"
 
     except:
-        try: # checks if the reason our code failed is because the 'we need more information' pop up appeareds
-            Wait.until(EC.visibility_of_element_located( (By.XPATH, "//*[@id='ui-id-3' and text() = 'We need more information']") ) )
-            print("Need more information", end= " -- ")
-            aa_output_df.loc[person_i, "AA_Error_code"] = "Webiste Does Not Quote For This Car Variant"
-        except exceptions.TimeoutException:
-            print("Unknown Error!!", end= " -- ")
-            aa_output_df.loc[person_i, "AA_Error_code"] = "Unknown Error"
+        #try: # checks if the reason our code failed is because the 'we need more information' pop up appeareds
+        Wait.until(EC.visibility_of_element_located( (By.XPATH, "//*[@id='ui-id-3' and text() = 'We need more information']") ) )
+        #    print("Need more information", end= " -- ")
+        #    aa_output_df.loc[person_i, "AA_Error_code"] = "Webiste Does Not Quote For This Car Variant"
+        #except exceptions.TimeoutException:
+        #    print("Unknown Error!!", end= " -- ")
+        #    aa_output_df.loc[person_i, "AA_Error_code"] = "Unknown Error"
 
     end_time = time.time() # get time of end of each iteration
     print("Elapsed time:", round(end_time - start_time,2)) # print out the length of time taken

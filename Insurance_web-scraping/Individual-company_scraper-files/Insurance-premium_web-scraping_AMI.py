@@ -55,7 +55,6 @@ def export_auto_dataset(input_indexes):
         # set the column "Sample Number" to be the index column so the dataframe combine on "Sample Number"
         insurance_premium_web_scraping_AMI_df.set_index("Sample Number", drop=True, inplace=True)
 
-
         # combine with the newly scraped data (anywhere there is an overlap, the newer (just scraped) data overwrites the older data)
         auto_dataset_for_export = ami_output_df.iloc[input_indexes].combine_first(insurance_premium_web_scraping_AMI_df)
     finally:
@@ -89,6 +88,12 @@ def dataset_preprocess():
     global test_auto_data_df
     test_auto_data_df = pd.read_csv(test_auto_data_csv, dtype={"Postcode":"int"})
 
+    # setting all NA values in string columns to to be an empty string
+    test_auto_data_df.loc[:,["Registration", "Type", "Series", "Unit_number", "Street_number", "Street_name", "Street_type", "Suburb", "City", "Licence", "NZ_citizen_or_resident", "Visa_at_least_1_year", "Gender", "FinancePurchase", "Incidents_last2years_TOWER", "Incidents_last3years_AA", "Incidents_last5years_AMISTATE"]] = test_auto_data_df.loc[:,["Registration", "Type", "Series", "Unit_number", "Street_number", "Street_name", "Street_type", "Suburb", "City", "Licence", "NZ_citizen_or_resident", "Visa_at_least_1_year", "Gender", "FinancePurchase", "Incidents_last2years_TOWER", "Incidents_last3years_AA", "Incidents_last5years_AMISTATE"]].fillna("")
+
+   # setting some variables to be string types
+    test_auto_data_df.loc[:,"AgreedValue"] = test_auto_data_df.loc[:,"AgreedValue"].astype(str)
+    
     # sets all values of the policy start date to be today's date
     for key in test_auto_data_df:
         test_auto_data_df['PolicyStartDate'] = datetime.strftime(date.today(), "%d/%m/%Y")
@@ -103,14 +108,22 @@ def dataset_preprocess():
     # creates a new dataframe to save the scraped info
     global ami_output_df
     ami_output_df = test_auto_data_df.loc[:, ["Sample Number", "PolicyStartDate"]]
-    ami_output_df["AMI_agreed_value"] = test_auto_data_df["AgreedValue"].to_string(index=False).strip().split()
+    ami_output_df["AMI_agreed_value"] = test_auto_data_df["AgreedValue"]
     ami_output_df["AMI_monthly_premium"] = ["-1"] * len(test_auto_data_df)
     ami_output_df["AMI_yearly_premium"] = ["-1"] * len(test_auto_data_df)
     ami_output_df["AMI_agreed_value_minimum"] = [-1] * len(test_auto_data_df)
     ami_output_df["AMI_agreed_value_maximum"] = [-1] * len(test_auto_data_df)
     ami_output_df["AMI_Error_code"] = ["No Error"] * len(test_auto_data_df)
 
-    
+# formats the string that summarises all the information about a car
+def db_car_details(data):
+    details_list = ["Model", "Vehicle_year","Body_type", "Model_type", "Automatic", "Engine_size", "Petrol_type"]
+    output_string = f"{data["Manufacturer"]}"
+    for detail in details_list:
+        if data[detail] != "":
+            output_string += f", {data[detail]}"
+    return output_string
+
 
 def load_webdriver():
     # loads chromedriver
@@ -138,25 +151,13 @@ def ami_auto_scrape(person_i):
     # defining a function which take the information from the spreadsheet and formats it so it can be used to scrape premium from ami website
     def ami_auto_data_format(person_i):
         # formatting model type
-        model_type = test_auto_data_df.loc[person_i,'Type']
-
-        # setting NA values to an empty string
-        if pd.isna(model_type):
-            model_type = ""
-        else:
-            model_type = str(model_type)
+        model_type = str(test_auto_data_df.loc[person_i,'Type'])
 
         # formatting model series
-        model_series = test_auto_data_df.loc[person_i,'Series']
-
-        # setting NA values to an empty string
-        if pd.isna(model_series):
-            model_series = ""
-        else:
-            model_series = str(model_series)
+        model_series = str(test_auto_data_df.loc[person_i,'Series'])
 
         # formatting gearbox info (what transmission type)
-        automatic = test_auto_data_df.loc[person_i,'Gearbox']
+        automatic = str(test_auto_data_df.loc[person_i,'Gearbox'])
 
         if "Constantly Variable Transmission" in automatic or "CVT" in automatic:
             automatic = "Constantly Variable"  
@@ -206,7 +207,7 @@ def ami_auto_scrape(person_i):
             drivers_license_type = "International / Other overseas licence" 
 
         # formatting the number of years the person had had their drivers licence
-        drivers_license_years = test_auto_data_df.loc[person_i,'License_years_TOWER']
+        drivers_license_years = int(test_auto_data_df.loc[person_i,'License_years_TOWER'])
         if drivers_license_years < 1:
             drivers_license_years = "Less than a year"
         elif drivers_license_years == 1:
@@ -232,7 +233,7 @@ def ami_auto_scrape(person_i):
                     "Model_series":model_series,
                     "Vehicle_year":test_auto_data_df.loc[person_i,'Vehicle_year'],
                     "Body_type":test_auto_data_df.loc[person_i,'Body'].upper(),
-                    "Engine_size":f"{math.ceil(test_auto_data_df.loc[person_i,'CC'])}cc/{round(test_auto_data_df.loc[person_i,'CC']/100)/10}L",
+                    "Engine_size":f"{math.ceil( float(test_auto_data_df.loc[person_i,'CC']) )}cc/{round( float(test_auto_data_df.loc[person_i,'CC'])/100 )/10}L",
                     "Automatic":automatic,
                     "Petrol_type":petrol_type,
                     "Immobiliser":test_auto_data_df.loc[person_i,'Immobiliser_alarm'],
@@ -273,24 +274,24 @@ def ami_auto_scrape(person_i):
     def ami_auto_scrape_premium(data):
 
         # defining a function to select the correct model variant
-        def select_model_variant(db_car_details = f"{data["Manufacturer"]} {data["Model"]} {data["Vehicle_year"]} {data["Body_type"]} {data["Model_type"]} {data["Model_series"]} {data["Automatic"]} {data["Engine_size"]} {data["Petrol_type"]}",
-                                  xpath = '//*[@id="searchByMMYResult"]/div[2]/span'):
+        def select_model_variant(db_car_details = db_car_details(data), xpath = '//*[@id="searchByMMYResult"]/div[2]/span'):
             
             # scraping these details from the webpage
             car_variant_options = tuple(driver.find_elements(By.XPATH, xpath))
 
             # get a list of the similarity scores of our car variant option, compared with the string summarising the info from the database
-            car_variant_accuracy_score = [fuzz.partial_token_sort_ratio(db_car_details, option.text) for option in car_variant_options]
+            car_variant_accuracy_score = [fuzz.partial_ratio(db_car_details, option.text) for option in car_variant_options]
 
             # save the highest accuarcy score
             max_value = max(car_variant_accuracy_score)
 
             # get the car variant option(s) that match the data the best
             car_variant_options = [car_variant_options[index] for index, score in enumerate(car_variant_accuracy_score) if score == max_value]
-
+            
             if len(car_variant_options) > 1:
                 print("Unable to fully narrow down", end=" - ")
                 ami_output_df.loc[person_i, "AMI_Error_code"] = "Several Car Variant Options Warning"
+
             
             # return the (1st) best matching car variant option
             return car_variant_options[0]
@@ -351,9 +352,10 @@ def ami_auto_scrape(person_i):
 
 
         # attempt to input the car registration number (if it both provided and valid)
-        registration_na = pd.isna(data["Registration_number"])
+        registration_na = data["Registration_number"] == ""
         if not registration_na: # if there is a registration number provided
             Wait10.until(EC.presence_of_element_located((By.ID, "vehicle_searchRegNo")) ).send_keys(data["Registration_number"]) # input registration
+
             driver.find_element(By.ID, "ie_regSubmitButton").click() # click submit button
 
             time.sleep(2.5)
@@ -365,10 +367,15 @@ def ami_auto_scrape(person_i):
                 registration_invalid = False
             except: # if that element is not findable then the registration must have been invalid
                 registration_invalid = True
+        
         # is effectively an "else" statement for the above if
         if registration_na or registration_invalid: # if registration invalid or not provided we need to enter car details
-            # Find the button "Make, Model, Year" and click it
-            Wait10.until(EC.element_to_be_clickable( (By.ID, "ie_MMYPrepareButton") )).click()
+
+            try: # Check that "Make Model Year is not already open"
+                Wait.until(EC.element_to_be_clickable((By.ID, "ie_returnRegSearchButton")))
+            except exceptions.TimeoutException: # if "Make Model Year is not already open", then find the button to open it and click it
+                # Find the button "Make, Model, Year" and click it
+                Wait.until(EC.element_to_be_clickable( (By.ID, "ie_MMYPrepareButton") )).click()
 
 
             # inputting the car manufacturer
@@ -454,7 +461,8 @@ def ami_auto_scrape(person_i):
 
         # inputs the address the car is kept at
         driver.find_element(By.ID, "garagingAddress_autoManualRadio").click() # click button to enter address manually
-        if not pd.isna(data["Unit"]): driver.find_element(By.ID, "garagingAddress_manualUnitNumber").send_keys(data["Unit"]) # input Unit/Apt IF is applicable
+        if not data["Unit"] != "": 
+            driver.find_element(By.ID, "garagingAddress_manualUnitNumber").send_keys(data["Unit"]) # input Unit/Apt IF is applicable
         driver.find_element(By.ID, "garagingAddress_manualStreetNumber").send_keys(data["Street_number"])
         driver.find_element(By.ID, "garagingAddress_manualStreetName").send_keys(data["Street_name"])
         try: # this try block is all just attempting various ways of selecting the final address, either through selecting a pop down from the street, or a pop down from the suburb
@@ -541,11 +549,11 @@ def ami_auto_scrape(person_i):
         ami_output_df.loc[person_i, "AMI_agreed_value_maximum"] = max_value # save the maximum allowed agreed value
 
         # check if our attempted agreed value is valid. if not, round up/down to the min/max value
-        if data["Agreed_value"] > max_value:
-            data["Agreed_value"] = max_value
+        if int(data["Agreed_value"]) > max_value:
+            data["Agreed_value"] = str(max_value)
             print("Attempted to input agreed value larger than the maximum", end=" - ")
-        elif data["Agreed_value"] < min_value:
-            data["Agreed_value"] = min_value
+        elif int(data["Agreed_value"]) < min_value:
+            data["Agreed_value"] = str(min_value)
             print("Attempted to input agreed value smaller than the minimum", end=" - ")
 
         # output the corrected agreed value
@@ -554,7 +562,7 @@ def ami_auto_scrape(person_i):
         # inputs the agreed value input the input field (after making sure its valid)
         agreed_value_input = driver.find_element(By.ID, "agreedValueText") # find the input field for the agreed value
         agreed_value_input.send_keys(Keys.CONTROL, "a") # select all current value
-        agreed_value_input.send_keys(str(data["Agreed_value"])) # input the desired value, writing over the (selected) current value
+        agreed_value_input.send_keys(data["Agreed_value"]) # input the desired value, writing over the (selected) current value
 
         time.sleep(2) # wait for page to load
 
@@ -574,7 +582,8 @@ def ami_auto_scrape(person_i):
 
         except exceptions.TimeoutException:
             print("Unchangable excess", end=" -- ")
-            ami_output_df.loc[person_i, "AMI_Error_code"] = "Excess cannot be changed"
+            excess = driver.find_element(By.XPATH, '//*[@id="driver0Value"]/span[2]').text
+            ami_output_df.loc[person_i, "AMI_Error_code"] = f"Excess cannot be changed from {excess}"
 
             time.sleep(3) # wait for page to update the final premiums
 
@@ -609,13 +618,13 @@ def ami_auto_scrape(person_i):
         else:
             ami_output_df.loc[person_i, "AMI_Error_code"] = "Unknown Error"
     except:
-        try: # checks if the reason our code failed is because the 'we need more information' pop up appeareds
-            Wait.until(EC.visibility_of_element_located( (By.XPATH, "//*[@id='ui-id-3' and text() = 'We need more information']") ) )
-            print("Need more information", end= " -- ")
-            ami_output_df.loc[person_i, "AMI_Error_code"] = "Webiste Does Not Quote For This Car Variant"
-        except exceptions.TimeoutException:
-            print("Unknown Error!!", end= " -- ")
-            ami_output_df.loc[person_i, "AMI_Error_code"] = "Unknown Error"
+        #try: # checks if the reason our code failed is because the 'we need more information' pop up appeareds
+        Wait.until(EC.visibility_of_element_located( (By.XPATH, "//*[@id='ui-id-3' and text() = 'We need more information']") ) )
+        #    print("Need more information", end= " -- ")
+        #    ami_output_df.loc[person_i, "AMI_Error_code"] = "Webiste Does Not Quote For This Car Variant"
+        #except exceptions.TimeoutException:
+        #    print("Unknown Error!!", end= " -- ")
+        #    ami_output_df.loc[person_i, "AMI_Error_code"] = "Unknown Error"
 
     end_time = time.time() # get time of end of each iteration
     print("Elapsed time:", round(end_time - start_time,2)) # print out the length of time taken

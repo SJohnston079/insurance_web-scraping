@@ -1,11 +1,2 @@
-Sample Number,PolicyStartDate,AA_agreed_value,AA_monthly_premium,AA_yearly_premium,AA_agreed_value_was_adjusted
-10001,14/02/2024,3020,58.64,637.25,0
-10002,14/02/2024,5480,64.26,698.14,0
-10003,14/02/2024,5400,75.64,821.7,0
-10004,14/02/2024,19340,116.54,1265.44,0
-10005,14/02/2024,8855,75.36,818.64,0
-10006,14/02/2024,3200,70.0,760.45,0
-10007,14/02/2024,45000,122.82,1333.55,1
-10008,14/02/2024,8700,-1,-1,0
-10009,14/02/2024,84965,-1,-1,0
-10010,14/02/2024,14900,114.45,1242.77,0
+Sample Number,PolicyStartDate,AA_agreed_value,AA_monthly_premium,AA_yearly_premium,AA_agreed_value_minimum,AA_agreed_value_maximum,AA_Error_code
+10717,28/02/2024,17700,106.04,1151.53,10075,30225,Several Car Variant Options Warning

@@ -1,11 +1,2 @@
-Sample Number,PolicyStartDate,AMI_agreed_value,AMI_monthly_premium,AMI_yearly_premium,AMI_agreed_value_was_adjusted
-10001,14/02/2024,3020,43.97,493.58,0
-10002,14/02/2024,5480,54.2,608.33,0
-10003,14/02/2024,5400,81.5,914.54,0
-10004,14/02/2024,19340,90.91,1020.02,0
-10005,14/02/2024,8855,73.88,829.07,0
-10006,14/02/2024,3200,60.07,674.15,-1
-10007,14/02/2024,45000,93.82,1052.61,1
-10008,14/02/2024,8700,55.43,622.13,0
-10009,14/02/2024,84965,207.31,2325.48,1
-10010,14/02/2024,14900,88.94,998.03,0
+Sample Number,PolicyStartDate,AMI_agreed_value,AMI_monthly_premium,AMI_yearly_premium,AMI_agreed_value_minimum,AMI_agreed_value_maximum,AMI_Error_code
+10717,28/02/2024,17700,103.55,1161.8,11063,17700,No Error
