@@ -7,6 +7,7 @@ from selenium.webdriver.chrome.service import Service
 from selenium.webdriver.support import expected_conditions as EC
 from selenium.webdriver.support.ui import WebDriverWait, Select
 from webdriver_manager.chrome import ChromeDriverManager
+from selenium.webdriver.chrome.options import Options
 import time
 
 # data management/manipulation related imports
@@ -40,9 +41,12 @@ test_auto_data_csv = f"{parent_dir}\\test_auto_data1.csv" # defines the path to 
 Useful functions
 """
 def export_auto_dataset(input_indexes):
+    # set the dates to be what was scraped
+    global tower_output_df # making it so that this 'reset' of the index is done to the globally stored data
+    tower_output_df["PolicyStartDate"] = test_auto_data_df["PolicyStartDate"]
+
     try:
         # set the column "Sample Number" to be the index column
-        global tower_output_df # making it so that this 'reset' of the index is done to the globally stored data
         tower_output_df.set_index("Sample Number", drop=True, inplace=True)
 
         # read in the output dataset
@@ -73,6 +77,7 @@ def postcode_reformat(postcode):
     return postcode
 
 
+
 def convert_money_str_to_int(money_string, cents = False):
     money_string = re.sub(r'\(.*?\)', '', money_string) # deletes all characters that are in between brackets (needed for tower as its annual payment includes '(save $88.37)' or other equivalent numbers)
     money_string = remove_non_numeric(money_string)
@@ -88,18 +93,18 @@ def dataset_preprocess():
     test_auto_data_df = pd.read_csv(test_auto_data_csv, dtype={"Postcode":"int"})
 
     # setting all NA values in string columns to to be an empty string
-    test_auto_data_df.loc[:,["Registration", "Type", "Series", "Unit_number", "Street_number", "Street_name", "Street_type", "Suburb", "City", "Licence", "NZ_citizen_or_resident", "Visa_at_least_1_year", "Gender", "FinancePurchase", "Incidents_last2years_TOWER", "Incidents_last3years_AA", "Incidents_last5years_AMISTATE"]] = test_auto_data_df.loc[:,["Registration", "Type", "Series", "Unit_number", "Street_number", "Street_name", "Street_type", "Suburb", "City", "Licence", "NZ_citizen_or_resident", "Visa_at_least_1_year", "Gender", "FinancePurchase", "Incidents_last2years_TOWER", "Incidents_last3years_AA", "Incidents_last5years_AMISTATE"]].fillna("")
+    test_auto_data_df = test_auto_data_df.apply(lambda x: x.fillna("") if x.dtype == "object" else x)
 
     # setting some variables to be string types
     test_auto_data_df.loc[:,"AgreedValue"] = test_auto_data_df.loc[:,"AgreedValue"].astype(str)
 
-    # sets all values of the policy start date to be today's date
-    for key in test_auto_data_df:
-        test_auto_data_df['PolicyStartDate'] = datetime.strftime(date.today(), "%d/%m/%Y")
-    
-    # converts the two values which should be dates into dates
+    ## converts the two values which should be dates into dates
+    # convert the date of birth variable into a date object
     test_auto_data_df['DOB'] = pd.to_datetime(test_auto_data_df['DOB'], format='%Y-%m-%d')
-    test_auto_data_df['Date_of_incident'] = pd.to_datetime(test_auto_data_df['Date_of_incident'], format='%Y-%m-%d')
+
+    # convert all the date of incident variables into a date objects
+    for i in range(1,7):
+        test_auto_data_df[f'Date_of_incident{i}'] = pd.to_datetime(test_auto_data_df[f'Date_of_incident{i}'], format='%Y/%m/%d')
 
     # pads out the front of postcodes with zeroes (as excel removes leading zeros)
     test_auto_data_df['Postcode'] = test_auto_data_df['Postcode'].apply(postcode_reformat)
@@ -113,6 +118,8 @@ def dataset_preprocess():
     tower_output_df["Tower_agreed_value_minimum"] = [-1] * len(test_auto_data_df)
     tower_output_df["Tower_agreed_value_maximum"] = [-1] * len(test_auto_data_df)
     tower_output_df["Tower_Error_code"] = ["No Error"] * len(test_auto_data_df)
+    tower_output_df["Tower_selected_car_variant"] = [""] * len(test_auto_data_df)
+    tower_output_df["Tower_selected_address"] = [""] * len(test_auto_data_df)
 
 
 def db_car_details_string_constructor(data):
@@ -139,6 +146,11 @@ def load_webdriver():
     # loads chromedriver
     global driver # defines driver as a global variable
     driver = webdriver.Chrome(service=Service(ChromeDriverManager().install()))
+
+    # setting up driver options settings
+    chrome_options = Options()
+    chrome_options.add_argument('--log-level=3')  # Set logging level to WARNING
+    driver = webdriver.Chrome(options=chrome_options)
 
     # define the implicit wait time for the session
     driver.implicitly_wait(1)
@@ -216,7 +228,6 @@ def tower_auto_scrape(person_i):
         else:
             automatic = "Other" # for all other gearboxes (e.g. reduction gear in electric)
 
-
         # getting the persons birthdate out as a date object (allows us to get the correct format more easily)
         birthdate = test_auto_data_df.loc[person_i,'DOB']
 
@@ -249,7 +260,7 @@ def tower_auto_scrape(person_i):
                     "Birthdate_month":birthdate.strftime("%m"),
                     "Birthdate_year":int(birthdate.strftime("%Y")),
                     "Sex":test_auto_data_df.loc[person_i,'Gender'],
-                    "Incidents_3_year":test_auto_data_df.loc[person_i,'Incidents_last3years_AA'],
+                    "Incidents_3_year":int(test_auto_data_df.loc[person_i,'Incidents_last3years_AA']),
                     "Exclude_under_25":test_auto_data_df.loc[person_i,'ExcludeUnder25'],
                     "Cover_type":test_auto_data_df.loc[person_i,'CoverType'],
                     "Agreed_value":int(round(float(test_auto_data_df.loc[person_i,'AgreedValue']))), # rounds the value to nearest whole number then converts to an integer
@@ -257,16 +268,44 @@ def tower_auto_scrape(person_i):
                     "Modifications":test_auto_data_df.loc[person_i,'Modifications'],
                     "Immobiliser":test_auto_data_df.loc[person_i,'Immobiliser_alarm'], 
                     "Finance_purchase":test_auto_data_df.loc[person_i,'FinancePurchase'],
-                    "Policy_start_date":str(test_auto_data_df.loc[person_i, "PolicyStartDate"])
+                    "Policy_start_date":str(test_auto_data_df.loc[person_i, "PolicyStartDate"]),
+                    "Email":str(test_auto_data_df.loc[person_i,'Email']),
+                    "Phone_number":str(test_auto_data_df.loc[person_i,'Phone Number']),
+                    "Business_or_trust":str(test_auto_data_df.loc[person_i,'Policy Owned by a Business or Trust']),
+                    "License_suspended":str(test_auto_data_df.loc[person_i,'License Suspended in Last 7 Years']),
+                    "Insurance_refused_7_years":str(test_auto_data_df.loc[person_i,'Insurance Refused In Last 7 Years']).upper() == "YES",
+                    "Claim_refused_7_years":str(test_auto_data_df.loc[person_i,'Claim Refused In Last 7 Years']).upper() == "YES",
+                    "Crime_7_years":str(test_auto_data_df.loc[person_i,'Crime in Last 7 Years']).upper() == "YES"
                     }
         
+        # formatting the bank that finance was got from
+        if tower_data["Finance_purchase"].upper() == "YES":
+            tower_data["Bank"] = str(test_auto_data_df.loc[person_i,'Finance Bank'])
+
+        # formatting the firstname
+        if pd.isna(test_auto_data_df.loc[person_i,'First_name']) or test_auto_data_df.loc[person_i,'First_name'] == "":
+            if tower_data["Sex"] == "MALE":
+                tower_data["First_name"] = "John"
+            else:
+                tower_data["First_name"] = "Jane"
+        else:
+            tower_data["First_name"] = str(test_auto_data_df.loc[person_i,'First_name'])
+        
+        # formatting the surname
+        if pd.isna(test_auto_data_df.loc[person_i,'Surname']) or test_auto_data_df.loc[person_i,'Surname'] == "":
+            tower_data["Surname"] = "Doe"
+        else:
+            tower_data["Surname"] = str(test_auto_data_df.loc[person_i,'Surname'])
+
         # adding info on the date and type of incident to the tower_data dictionary ONLY if the person has had an incident within the last 5 years
-        incident_date = test_auto_data_df.loc[person_i,'Date_of_incident']
-        if tower_data["Incidents_3_year"] == "Yes":
-            tower_data["Incident_year"] = int(incident_date.strftime("%Y"))
+        if tower_data["Incidents_3_year"] > 0:
 
+            # saving all the incident dates
+            for i in range(1, tower_data["Incidents_3_year"] + 1):
+                tower_data[f"Incident{i}_year"] = int(test_auto_data_df.loc[person_i,f'Date_of_incident{i}'].strftime("%Y"))
+
+            # saving the incident type
             incident_type = test_auto_data_df.loc[person_i,'Type_incident'].lower() # initialising the variable incident type
-
             # choosing what Incident_type_index is
             if "theft" in incident_type: # “At fault – Fire damage or Theft”
                 tower_data["Incident_type_index"] = 6 # "Theft"
@@ -312,8 +351,8 @@ def tower_auto_scrape(person_i):
             # scraping these details from the webpage
             car_variant_options = tuple(driver.find_elements(By.XPATH, xpath))
 
-            # filter out all options where the Number of speeds or engine size is incorrect
-            car_variant_options = [option for option in car_variant_options if (data["Num_speeds"] in option.text and data["Engine_size"] in option.text)]
+            # filter out all options where the engine size is incorrect
+            car_variant_options = [option for option in car_variant_options if (data["Engine_size"] in option.text)]
 
             # if there are no car variant options with the correct number of speeds and correct engine size
             if len(car_variant_options) == 0:
@@ -327,64 +366,21 @@ def tower_auto_scrape(person_i):
 
             # save the highest accuarcy score
             max_value = max(car_variant_accuracy_score)
-            
-            '''
-            # if the highest match percentage is below 60% return None (then go and enter manually (as the registration number must have found an invalid car))
-            if max_value < 60 and xpath =='//*[@id="questionCarLookup"]/div[4]/div[2]/fieldset/div':
-                return None
-            '''
-
-            '''       
-            print()
-            for option in car_variant_options:
-                print(option.text)
-            '''
 
             # get the car variant option(s) that match the data the best
             car_variant_options = [car_variant_options[index] for index, score in enumerate(car_variant_accuracy_score) if score == max_value]
-            '''
-            print(car_variant_accuracy_score)
-            print(f"-{db_car_details}-")
-            input()
-            '''
+
             if len(car_variant_options) > 1:
                 print("Unable to fully narrow down", end=" - ")
                 tower_output_df.loc[person_i, "Tower_Error_code"] = "Several Car Variant Options Warning"
             
+            # saving the select model variant to the output df
+            tower_output_df.loc[person_i, "Tower_selected_car_variant"] = f"{data["Manufacturer"]} {data["Model"]} {data["Vehicle_year"]} {car_variant_options[0].text}"
+
             # return the (1st) best matching car variant option
             return car_variant_options[0]
 
-
-        # Open the webpage
-        driver.get("https://my.tower.co.nz/quote/car/page1")    
-
-        try: # if error go to except
-            handle_business_use_button()
-        except:
-            # if we cannot click the business use button, close and reopen the page
-            driver.quit() # quit this current driver
-            load_webdriver() # open a new webdriver session
-
-            # Open the webpage
-            driver.get("https://my.tower.co.nz/quote/car/page1")  
-
-            try: # if error go to except
-                handle_business_use_button()
-            except:
-                print("Cannot click business use button", end=" -- ")
-                return None
-
-                
-        
-        # clicks the button to reset the input data (need to do this everytime except first time, as the page 'remebers' the previous iteration)
-        try:
-            Wait.until(EC.presence_of_element_located( (By.ID, "vehicleUsedForBusiness-error-link"))).click()
-        except exceptions.TimeoutException:
-            pass
-
-
-        # attempt to input the car registration number (if it both provided and valid)
-        try: 
+        def enter_registration_number():
             if data["Registration_number"] == "": # if the vehicle registration number is NA then raise an exception (go to except block, skip rest of try)
                 raise ValueError("Registration_NA")
             else:
@@ -395,11 +391,20 @@ def tower_auto_scrape(person_i):
 
                 time.sleep(2) # wait for page to load
                 
+                # checking if the 'More info required' info box appears (if if does we return the Website Does Not Quote For This Car Variant error code)
+                try:
+                    Wait.until(EC.visibility_of_element_located((By.XPATH, '//*[@id="carLookupError"]/div/p[text()="More info required"]')))
+                    print("Need more information", end= " -- ")
+                    return "Doesn't Cover"
+                
+                except exceptions.TimeoutException:
+                    pass
 
                 try:
                     Wait.until_not(EC.presence_of_element_located( (By.XPATH, "//*[@id='carLookupError']/div/p[text() = 'No record found']") )) # checks that the carLookupError pop up does NOT appear
                 except exceptions.TimeoutException: # if the carLookupError pop up appears
                     raise ValueError("Registration_Invalid")
+
 
                 # try to select the correct model variant from a pop down list of options
                 try:
@@ -416,19 +421,22 @@ def tower_auto_scrape(person_i):
                         raise ValueError("Car found by registration number is incorrect!")
                 
                 except exceptions.TimeoutException: # if the list of options is not present, check if the correct car model has been already selected
-
                     # find the elements which lists the cars details, after having input the registration number
                     registration_found_car = Wait10.until(EC.presence_of_element_located((By.XPATH, "//*[@id='questionCarLookup']/div[4]/div[@class='car-results']")) )
                     
                     # constructing a string to represent the car details from the input data
                     db_car_details = f"{data["Manufacturer"]} {data["Model"]} {data["Body_type"]} {data["Vehicle_year"]} {data["Model_type"]} {data["Model_series"]} {data["Automatic"]} {data["Num_speeds"]} {data["Engine_size"]}"
 
-                    # check the similarity between the details on the website and the actual car details in the database, if similarly is not over 90% then enter details manually
-                    if fuzz.token_set_ratio(db_car_details, registration_found_car.text) < 90:
+                    # check the similarity between the details on the website and the actual car details in the database, if similarly is not over 80% then enter details manually
+                    if fuzz.token_set_ratio(db_car_details, registration_found_car.text) < 80:
                         raise ValueError("Car found by registration number is incorrect!")
+                    
+                    # saving the select model variant to the output df
+                    tower_output_df.loc[person_i, "Tower_selected_car_variant"] = registration_found_car.text
 
-
-        except ValueError: # if the registration is invalid or not provided, then need to enter car details manually
+        def enter_car_details_manually():
+            
+            # defining a function to check if our model selection is valid
 
             time.sleep(1) # wait for page to load
             
@@ -495,6 +503,7 @@ def tower_auto_scrape(person_i):
             try:
                 body_type_text_input = Wait.until(EC.presence_of_element_located((By.ID, "carBodyStyles"))) # find the car body type input box and
                 if body_type_text_input.get_attribute("value") == "": # checks the input fields value is currently empty
+
                     body_type_text_input.send_keys(data["Body_type"]) # inputs the body type
 
                     # wait until the options are ready to be clicked
@@ -508,18 +517,64 @@ def tower_auto_scrape(person_i):
 
             # inputting car vehicle type
             car_model_type_text_input = Wait.until(EC.presence_of_element_located((By.ID, "carVehicleTypes"))) # find the model type input box and then input the model type
-            if car_model_type_text_input.get_attribute("value") == "": # checks the input fields value is currently empty
-                car_model_type_text_input.send_keys(data["Model_type"]) # inputs the body type
 
+            if car_model_type_text_input.get_attribute("value") == "": # checks the input fields value is currently empty
+
+                # if the body type is not empty
+                if data["Model_type"] != "":
+                        car_model_type_text_input.send_keys(data["Model_type"]) # inputs the model type
+                else: # if the body type is not empty, then open the drop down by just clicking the element
+                    car_model_type_text_input.click()
+                    time.sleep(0.5) # wait for page to load
+                
+                
                 # select the correct model variant
                 selected_model_variant_element = select_model_variant()
 
-                if selected_model_variant_element == "Unable to find car variant":
+                if selected_model_variant_element != None and selected_model_variant_element != "Unable to find car variant": # if a well matching car variant was found
+                    selected_model_variant_element.click() # click the selected model variant
+                else:
                     return "Unable to find car variant"
 
-                # click the selected model variant
-                selected_model_variant_element.click()
 
+        # Open the webpage
+        driver.get("https://my.tower.co.nz/quote/car/page1")    
+        
+        try: # if error go to except
+            handle_business_use_button()
+        except:
+            # if we cannot click the business use button, close and reopen the page
+            driver.quit() # quit this current driver
+            load_webdriver() # open a new webdriver session
+
+            # Open the webpage
+            driver.get("https://my.tower.co.nz/quote/car/page1")  
+
+            try: # if error go to except
+                handle_business_use_button()
+            except:
+                print("Cannot click business use button", end=" -- ")
+                return None
+
+                
+        
+        # clicks the button to reset the input data (need to do this everytime except first time, as the page 'remembers' the previous iteration)
+        try:
+            Wait.until(EC.presence_of_element_located( (By.ID, "vehicleUsedForBusiness-error-link"))).click()
+        except exceptions.TimeoutException:
+            pass
+
+
+        # attempt to input the car registration number (if it both provided and valid)
+        try: 
+            if use_registration_number:
+                enter_registration_number()
+            else:
+                raise ValueError("Not Using Registration Number")
+
+        except ValueError: # if the registration is invalid or not provided, then need to enter car details manually
+            enter_car_details_manually()
+            
         # enters whether the car has an immobiliser, if needed
         try:
             if data["Immobiliser"] == "Yes":
@@ -531,6 +586,7 @@ def tower_auto_scrape(person_i):
 
         time.sleep(1) # wait for page to process information
 
+
         ## input the address the car is usually kept overnight at
         # inputing postcode + suburb
         Wait.until(EC.element_to_be_clickable( (By.ID, "lnkManualAddress") )).click() # click this button to enter the address manually
@@ -540,22 +596,32 @@ def tower_auto_scrape(person_i):
             Wait.until(EC.presence_of_element_located((By.ID, "txtAddress-suburb-city-postcode")) ).send_keys(data["Street_name"] + ", " + data["Suburb"]) # input the street name and suburb
 
             # find the pop down option with the correct suburb and postcode then select it 
-            Wait10.until(EC.element_to_be_clickable( (By.XPATH, f"//ul[@id='txtAddress-suburb-city-postcode-menu-list']/*/div/div[2]/div[contains(text(), '{data["Suburb"]}') and contains(text(), '{data["Postcode"]}')]"))).click()
+            address_element = Wait10.until(EC.element_to_be_clickable( (By.XPATH, f"//ul[@id='txtAddress-suburb-city-postcode-menu-list']/*/div/div[2]/div[contains(text(), '{data["Suburb"]}') and contains(text(), '{data["Postcode"]}')]")))
+
+            # write the selected address to the output dataframe
+            tower_output_df.loc[person_i, "Tower_selected_address"] = f"Unit {data["Unit"]}, {data["Street_number"]} {address_element.text}"
+
+            # selecting the option
+            address_element.click()
+
         except exceptions.TimeoutException:
             try:
-                driver.find_element(By.XPATH, f"//ul[@id='txtAddress-suburb-city-postcode-menu-list']/*/div/div[2]/div[contains(text(), '{data["Postcode"]}')]").click() # if the above doesn't work, just select an option with the correct postcode
+                # if the above doesn't work, just select an option with the correct postcode
+                address_element = driver.find_element(By.XPATH, f"//ul[@id='txtAddress-suburb-city-postcode-menu-list']/*/div/div[2]/div[contains(text(), '{data["Postcode"]}')]")
+
+                # write the selected address to the output dataframe
+                tower_output_df.loc[person_i, "Tower_selected_address"] = f"Unit {data["Unit"]}, {data["Street_number"]} {address_element.text}"
+
+                # selecting the option
+                address_element.click() 
+
             except exceptions.NoSuchElementException:
                 raise Exception("Address Invalid")
             
 
-        # enter the persons 'name' entering placeholder pseudonym either Jane or John Doe
-        if data["Sex"] == "MALE":
-            first_name = "John"
-        else:
-            first_name = "Jane"
-        
-        Wait.until(EC.presence_of_element_located( (By.ID, "txtDriver-0-firstName") )).send_keys(first_name)
-        Wait.until(EC.presence_of_element_located( (By.ID, "txtDriver-0-lastName") )).send_keys("Doe")
+        # enter the persons 'name' entering placeholder pseudonym either Jane or John Doe (If no name was provided)
+        Wait.until(EC.presence_of_element_located( (By.ID, "txtDriver-0-firstName") )).send_keys(data["First_name"])
+        Wait.until(EC.presence_of_element_located( (By.ID, "txtDriver-0-lastName") )).send_keys(data["Surname"])
 
 
         # enter the main drivers date of birth
@@ -571,66 +637,72 @@ def tower_auto_scrape(person_i):
             return "Doesn't Cover"
 
         # select gender of main driver
-        if data["Sex"] == "Male":
+        if data["Sex"] == "MALE":
             driver.find_element(By.ID, "btndriverGender-0-0").click() # clicking the 'Male' button
         else: #is Female
             driver.find_element(By.ID, "btndriverGender-0-1").click() # clicking the 'Female' button
 
-
         # input if there have been any indicents
-        if data["Incidents_3_year"] == "Yes":
+        if data["Incidents_3_year"] > 0:
             driver.find_element(By.ID, "btndriverVehicleLoss-0-0").click() # clicks button saying that you have had an incident
 
-            driver.find_element(By.ID, "driverVehicleLossReason-0-0-toggle").click() # open incident type dropdown
+            for i in range(data["Incidents_3_year"]):
+                driver.find_element(By.ID, f"driverVehicleLossReason-0-{i}-toggle").click() # open incident type dropdown
 
-            # Incident_type_index == ...; 1: "Broken windscreen", 2: "Collision", 6: "Theft"
-            Wait.until(EC.presence_of_element_located( (By.XPATH, f"//ul[@id='driverVehicleLossReason-0-0-menu-options']/li[{data["Incident_type_index"]}]") )).click() # find the correct incident then select it
+                # Incident_type_index == ...; 1: "Broken windscreen", 2: "Collision", 6: "Theft"
+                Wait.until(EC.presence_of_element_located( (By.XPATH, f"//ul[@id='driverVehicleLossReason-0-{i}-menu-options']/li[{data["Incident_type_index"]}]") )).click() # find the correct incident then select it
 
-            time.sleep(1) # wait for page to load
-
-
-            # selects the correct year the indicent occured
-            year_id_index = datetime.now().year - data["Incident_year"] # gets the index for the id of the correct year element
-            Wait.until(EC.presence_of_element_located( (By.ID, f"btndriverVehicleLossReasonWhen-0-0-{year_id_index}") )).click()
+                time.sleep(1) # wait for page to load
 
 
-            # if the incident type is a collision, damage while parked, or other causes
-            if data["Incident_type_index"] == 2:
+                # selects the correct year the indicent occured
+                year_id_index = datetime.now().year - data[f"Incident{i+1}_year"] # gets the index for the id of the correct year element
+                Wait.until(EC.presence_of_element_located( (By.ID, f"btndriverVehicleLossReasonWhen-0-{i}-{year_id_index}") )).click()
 
-                # if they had to pay an excess (if they made a claim)
-                if data["Incident_excess_paid"] == "Yes":
-                    driver.find_element(By.ID, "btndriverVehicleLossExcess-0-0-0").click() # click yes button
-                else:
-                    driver.find_element(By.ID, "btndriverVehicleLossExcess-0-0-1").click() # click no button
+
+                # if the incident type is a collision, damage while parked, or other causes
+                if data["Incident_type_index"] == 2:
+
+                    # if they had to pay an excess (if they made a claim)
+                    if data["Incident_excess_paid"] == "Yes":
+                        driver.find_element(By.ID, f"btndriverVehicleLossExcess-0-{i}-0").click() # click yes button
+                    else:
+                        driver.find_element(By.ID, f"btndriverVehicleLossExcess-0-{i}-1").click() # click no button
+
+                # click the button to add an incident
+                if i < data["Incidents_3_year"] - 1: # if not on the final incident, click button to 'Add another incident'
+                    Wait.until(EC.element_to_be_clickable((By.ID, f"mainIncidentsAccordion-0-{i}-add-link"))).click()
+
         else:
             driver.find_element(By.ID, "btndriverVehicleLoss-0-1").click() # clicks button saying that you have had no incidents
 
         # choose whether to exclude under all under 25 year old drivers from driving the car
         try:
-            if data["Exclude_under_25"] == "Yes":\
+            if data["Exclude_under_25"] == "Yes":
                 driver.find_element(By.ID, "btnexcludeUnder25-0").click() # clicks yes button for exlcude under 25
             else: # select 'No'
                 driver.find_element(By.ID, "btnexcludeUnder25-1").click() # clicks no button for exlcude under 25
         except:
             pass
         
-        # press button to aknowledge the extra $1000 excess
-        try:
-            Wait.until(EC.element_to_be_clickable((By.ID, "btnClose"))).click()
-            print("Extra $1000 Excess", end=" - ")
-            time.sleep(10000)
-        except exceptions.TimeoutException:
-            pass
-
+        
         try:
             # try to click button 'Next: Customise' to move onto next page
             Wait.until(EC.element_to_be_clickable( (By.ID, "btnSubmitPage") )).click()
         except exceptions.TimeoutException:
             # accept the privacy policy
             Wait.until(EC.element_to_be_clickable( (By.ID, "privacyPolicy-label") )).click()
-
+            
             # THEN click button 'Next: Customise' to move onto next page
             Wait.until(EC.element_to_be_clickable( (By.ID, "btnSubmitPage") )).click()
+
+        # press button to aknowledge the extra excess
+        try:
+            Wait.until(EC.element_to_be_clickable((By.ID, "btnClose"))).click()
+            print("Extra Excess", end=" - ")
+        except exceptions.TimeoutException:
+            pass
+
 
         time.sleep(2.5) # wait for page to load
 
@@ -686,17 +758,16 @@ def tower_auto_scrape(person_i):
             driver.execute_script("arguments[0].scrollIntoView();", no_button) # scroll down until "No" modifications button is on screen (is needed to prevent the click from being intercepted)
             no_button.click() # click "No" modifications button
         else:
-            yes_button = Wait10.until(EC.element_to_be_clickable( (By.XPATH, "//*[@id='btnaccessoriesOrModificationsDeclined-0']/div[2]/div") ))# find "Yes" modifications button
-            driver.execute_script("arguments[0].scrollIntoView();", yes_button) # scroll down until "Yes" modifications button is on screen (is needed to prevent the click from being intercepted)
-            yes_button.click() # click "Yes" modifications button
-            raise Exception("Not insurable: Modifications")
+            print("Not insurable: Modifications", end=" -- ")
+            return "Doesn't Cover"
 
         # click button to state whether or not the car has any 'minor' modifications
         if data["Modifications"] == "No":
             Wait10.until(EC.element_to_be_clickable( (By.ID, "btnaccessoriesOrModifications-1") )).click() # click "No" modifications button
         else:
-            Wait10.until(EC.element_to_be_clickable( (By.ID, "btnaccessoriesOrModifications-0") )).click() # click "Yes" modifications button
-            raise Exception("Need to know the combined value of the minor modifications")
+            print("Not insurable: Modifications", end=" -- ")
+            return "Doesn't Cover"
+            
 
         # click 'Next: Summary' button to move onto the summary page
         next_button = Wait10.until(EC.element_to_be_clickable( (By.ID, "btnSubmitPage")))
@@ -709,35 +780,41 @@ def tower_auto_scrape(person_i):
         except:
             pass
 
-        time.sleep(5)
-
         # move onto the next page "People"
         Wait10.until(EC.element_to_be_clickable((By.ID, "btnSubmitPage"))).click()
 
         time.sleep(3) # wait for page to load    
-    
+
         # if a pop telling us 'an additional excess of ... will apply to claims of theft for this vehicle' appears, close it
         try:
             Wait.until(EC.element_to_be_clickable((By.ID, "btnClose"))).click()
         except exceptions.TimeoutException: # if the popup not present then continue
             pass
-
+        
         # click button to say that the driver has NOT "had their licence suspended or cancelled or had a special condition imposed"
-        Wait10.until(EC.element_to_be_clickable((By.ID, "btndriver-0-licence-cancelled-1"))).click()
+        if data["License_suspended"].upper() == "NO":
+            Wait10.until(EC.element_to_be_clickable((By.ID, "btndriver-0-licence-cancelled-1"))).click()
+        else: # if they have had their license suspended or cancelled or had a special condition imposed
+            print("Cannot Insure Person Because of their driving history", end=" -- ")
+            return "Doesn't Cover"
 
         # click button to say that the policy will NOT be held by a business or trust
-        Wait.until(EC.element_to_be_clickable((By.ID, "btnownedByBusinessOrTrust-1"))).click()
+        if data["Business_or_trust"].upper() == "NO":
+            Wait.until(EC.element_to_be_clickable((By.ID, "btnownedByBusinessOrTrust-1"))).click()
+        else:
+            print("Owned by business or trust", end=" -- ")
+            return "Invalid Input Data Error: Policy Owned by a Business or Trust = 'Yes'"
+
 
         # enter email address
-        email_address = f"{first_name}.Doe@email.com"
-        Wait.until(EC.presence_of_element_located((By.ID, "txtDriver-0-email"))).send_keys(email_address)
+        Wait.until(EC.presence_of_element_located((By.ID, "txtDriver-0-email"))).send_keys(data["Email"])
 
         # enter phone number
-        Wait.until(EC.presence_of_element_located((By.ID, "txtDriver-0-phoneNumbers-0"))).send_keys("022 123 456")
+        Wait.until(EC.presence_of_element_located((By.ID, "txtDriver-0-phoneNumbers-0"))).send_keys(data["Phone_number"])
 
         # click button to go to next page 'Legal'
         Wait.until(EC.element_to_be_clickable((By.ID, "btnSubmitPage"))).click()
-
+        
         # click button to say I understand the 1st legal information declaration (the 'Yes' button)
         Wait10.until(EC.element_to_be_clickable((By.ID, "btnlegalDeclaration-0"))).click()
 
@@ -745,21 +822,33 @@ def tower_auto_scrape(person_i):
         Wait.until(EC.element_to_be_clickable((By.ID, "btnexclusions-0"))).click()
 
         # click button to say I haven't had insurance refused or cancelled within the last 7 years (the 'No' button)
-        Wait.until(EC.element_to_be_clickable((By.ID, "btninsuranceHistory-1"))).click()
+        if not data["Insurance_refused_7_years"]: # if person has never had insurance refused
+            Wait.until(EC.element_to_be_clickable((By.ID, "btninsuranceHistory-1"))).click()
+        else:
+            print("Cannot Cover Because Insurance Has Previously Been Refused", end=" -- ")
+            return "Doesn't Cover"
 
         # click button to say I haven't had a claim declined or policy avoided in the last 7 years (the 'No' button)
-        Wait.until(EC.element_to_be_clickable((By.ID, "btnclaimsDeclined-1"))).click()
+        if not data["Claim_refused_7_years"]:
+            Wait.until(EC.element_to_be_clickable((By.ID, "btnclaimsDeclined-1"))).click()
+        else:
+            print("Cannot cover: Had claim refused within last 7 years")
+            return "Doesn't Cover"
 
         # click button to say I have not been convicted of Fraud, Arson, Bugulary, Wilfull damage, sexual offences, or drugs conviction within the last 7 years (the 'No' button)
-        Wait.until(EC.element_to_be_clickable((By.ID, "btncriminalHistory-1"))).click()
+        if not data["Crime_7_years"]:
+            Wait.until(EC.element_to_be_clickable((By.ID, "btncriminalHistory-1"))).click()
+        else:
+            print("Cannot cover: Commited Serious Crime within last 7 years", end=" --")
+            return "Doesn't Cover"
 
         # select whether the car was purchased on finance
         if data["Finance_purchase"].upper() == "NO":
             Wait10.until(EC.element_to_be_clickable( (By.ID, "btnmoneyOwed-1") )).click() # click "No" Finance" button
         else:
             Wait10.until(EC.element_to_be_clickable( (By.ID, "btnmoneyOwed-0") )).click() # click "Yes" Finance" button
-            Wait.until(EC.presence_of_element_located((By.ID, "financialInterestedParty-0-financialInterestedParty-financial-institution-search"))).send_keys("Kiwibank") # enter the finance provider as kiwibank
-            Wait.until(EC.element_to_be_clickable((By.XPATH, '//ul[@id="financialInterestedParty-0-financialInterestedParty-financial-institution-search-menu-list"]/li'))).click() # select 'Kiwibank Limited' as finance provider
+            Wait.until(EC.presence_of_element_located((By.ID, "financialInterestedParty-0-financialInterestedParty-financial-institution-search"))).send_keys(data["Bank"]) # enter the finance provider as kiwibank
+            Wait.until(EC.element_to_be_clickable((By.XPATH, '//ul[@id="financialInterestedParty-0-financialInterestedParty-financial-institution-search-menu-list"]/li[1]'))).click() # select the first option as finance provider
 
         # click button to go to the next page 'Finalise'
         Wait.until(EC.element_to_be_clickable((By.ID, "btnSubmitPage"))).click()
@@ -799,21 +888,25 @@ def tower_auto_scrape(person_i):
             # save the scraped premiums to the output dataset
             tower_output_df.loc[person_i, "Tower_monthly_premium"] = tower_auto_premium[0] # monthly
             tower_output_df.loc[person_i, "Tower_yearly_premium"] = tower_auto_premium[1] # yearly
+
+        # all these are processing error codes
         elif tower_auto_premium == "Doesn't Cover":
             tower_output_df.loc[person_i, "Tower_Error_code"] = "Website Does Not Quote For This Car Variant/ Person"
         elif tower_auto_premium == "Unable to find car variant":
             tower_output_df.loc[person_i, "Tower_Error_code"] = "Unable to find car variant"
+        elif "Invalid Input Data Error" in tower_auto_premium:
+            tower_output_df.loc[person_i, "Tower_Error_code"] = tower_auto_premium
         else:
             tower_output_df.loc[person_i, "Tower_Error_code"] = "Unknown Error"
 
     except:
-        #try: # checks if the reason our code failed is because the 'we need more information' pop up appeareds
-        Wait.until(EC.visibility_of_element_located( (By.XPATH, "//*[@id='ui-id-3' and text() = 'We need more information']") ) )
-        #    print("Need more information", end= " -- ")
-        #    tower_output_df.loc[person_i, "Tower_Error_code"] = "Webiste Does Not Quote For This Car Variant"
-        #except exceptions.TimeoutException:
-        #    print("Unknown Error!!", end= " -- ")
-        #    tower_output_df.loc[person_i, "Tower_Error_code"] = "Unknown Error"
+        try: # checks if the reason our code failed is because the 'we need more information' pop up appeareds
+            Wait.until(EC.visibility_of_element_located( (By.XPATH, "//*[@id='ui-id-3' and text() = 'We need more information']") ) )
+            print("Need more information", end= " -- ")
+            tower_output_df.loc[person_i, "Tower_Error_code"] = "Webiste Does Not Quote For This Car Variant"
+        except exceptions.TimeoutException:
+            print("Unknown Error!!", end= " -- ")
+            tower_output_df.loc[person_i, "Tower_Error_code"] = "Unknown Error"
 
     end_time = time.time() # get time of end of each iteration
     print("Elapsed time:", round(end_time - start_time, 2)) # print out the length of time taken
@@ -822,19 +915,35 @@ def tower_auto_scrape(person_i):
 
 
 def auto_scape_all():
+    
     # call the function to read in a preprocess the data
     dataset_preprocess()
 
-    # save the start index and the number of cars in the dataset as a variable (reading it from the standard input that the 'parent' process passes in)
 
+    ## reading in variables from the standard input that the 'parent' process passes in    
     input_indexes = input()
     input_indexes = input_indexes.replace("[", "").replace("]", "").split(",")
-    input_indexes = list(map(int, input_indexes))
+
+    # saving whether or not to use car registration number while scraping?
+    global use_registration_number
+    if input_indexes[0] == "Y":
+        use_registration_number = True
+    else:
+        use_registration_number = False
+
+    # save the start index and the number of cars in the dataset as a variable
+    input_indexes = list(map(int, input_indexes[1:]))
+
+
+
 
     # loop through all cars in test spreadsheet
     for person_i in input_indexes: 
 
         print(f"{person_i}: Tower: ", end = "") # print out the iteration number
+
+        # set for this person, the PolicyStartDate to todays date
+        test_auto_data_df.loc[person_i, "PolicyStartDate"] = datetime.strftime(date.today(), "%d/%m/%Y")
 
         # run on the ith car/person
         tower_auto_scrape(person_i)

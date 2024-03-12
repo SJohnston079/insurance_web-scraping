@@ -7,6 +7,7 @@ from selenium.webdriver.chrome.service import Service
 from selenium.webdriver.support import expected_conditions as EC
 from selenium.webdriver.support.ui import WebDriverWait, Select
 from webdriver_manager.chrome import ChromeDriverManager
+from selenium.webdriver.chrome.options import Options
 import time
 
 # data management/manipulation related imports
@@ -36,9 +37,13 @@ test_auto_data_csv = f"{parent_dir}\\test_auto_data1.csv" # defines the path to 
 Useful functions
 """
 def export_auto_dataset(row_indexes):
+
+    # set the dates to be what was scraped
+    global aa_output_df # making it so that this 'reset' of the index is done to the globally stored data
+    aa_output_df["PolicyStartDate"] = test_auto_data_df["PolicyStartDate"]
+
     try:
         # set the column "Sample Number" to be the index column
-        global aa_output_df # making it so that this 'reset' of the index is done to the globally stored data
         aa_output_df.set_index("Sample Number", drop=True, inplace=True)
 
         # read in the output dataset
@@ -48,13 +53,13 @@ def export_auto_dataset(row_indexes):
         # if there exists no df already, then we just export what we have scraped
         auto_dataset_for_export = aa_output_df.iloc[row_indexes] # get the given number of lines from the start
     else:
-        # set the column "Sample Number" to be the index column so the dataframe combine on "Sample Number""
+        # set the column "Sample Number" to be the index column so the dataframe combine on "Sample Number"
         insurance_premium_web_scraping_AA_df.set_index("Sample Number", drop=True, inplace=True)
 
         # combine with the newly scraped data (anywhere there is an overlap, the newer (just scraped) data overwrites the older data)
         auto_dataset_for_export = aa_output_df.iloc[row_indexes].combine_first(insurance_premium_web_scraping_AA_df)
+        auto_dataset_for_export.sort_index(inplace= True)
     finally:
-        
         # export the dataset
         auto_dataset_for_export.to_csv(f"{parent_dir}\\Individual-company_data-files\\aa_scraped_auto_premiums.csv")
 
@@ -88,18 +93,18 @@ def dataset_preprocess():
     test_auto_data_df = pd.read_csv(test_auto_data_csv, dtype={"Postcode":"int"})
 
     # setting all NA values in string columns to to be an empty string
-    test_auto_data_df.loc[:,["Registration", "Type", "Series", "Unit_number", "Street_number", "Street_name", "Street_type", "Suburb", "City", "Licence", "NZ_citizen_or_resident", "Visa_at_least_1_year", "Gender", "FinancePurchase", "Incidents_last2years_TOWER", "Incidents_last3years_AA", "Incidents_last5years_AMISTATE"]] = test_auto_data_df.loc[:,["Registration", "Type", "Series", "Unit_number", "Street_number", "Street_name", "Street_type", "Suburb", "City", "Licence", "NZ_citizen_or_resident", "Visa_at_least_1_year", "Gender", "FinancePurchase", "Incidents_last2years_TOWER", "Incidents_last3years_AA", "Incidents_last5years_AMISTATE"]].fillna("")
+    test_auto_data_df = test_auto_data_df.apply(lambda x: x.fillna("") if x.dtype == "object" else x)
 
     # setting some variables to be string types
     test_auto_data_df.loc[:,"AgreedValue"] = test_auto_data_df.loc[:,"AgreedValue"].astype(str)
 
-    # sets all values of the policy start date to be today's date
-    for key in test_auto_data_df:
-        test_auto_data_df['PolicyStartDate'] = datetime.strftime(date.today(), "%d/%m/%Y")
-    
-    # converts the two values which should be dates into dates
+    ## converts the two values which should be dates into dates
+    # convert the date of birth variable into a date object
     test_auto_data_df['DOB'] = pd.to_datetime(test_auto_data_df['DOB'], format='%Y-%m-%d')
-    test_auto_data_df['Date_of_incident'] = pd.to_datetime(test_auto_data_df['Date_of_incident'], format='%Y-%m-%d')
+
+    # convert all the date of incident variables into a date objects
+    for i in range(1,7):
+        test_auto_data_df[f'Date_of_incident{i}'] = pd.to_datetime(test_auto_data_df[f'Date_of_incident{i}'], format='%Y/%m/%d')
 
     # pads out the front of postcodes with zeroes (as excel removes leading zeros)
     test_auto_data_df['Postcode'] = test_auto_data_df['Postcode'].apply(postcode_reformat) 
@@ -113,6 +118,8 @@ def dataset_preprocess():
     aa_output_df["AA_agreed_value_minimum"] = [-1] * len(test_auto_data_df)
     aa_output_df["AA_agreed_value_maximum"] = [-1] * len(test_auto_data_df)
     aa_output_df["AA_Error_code"] = ["No Error"] * len(test_auto_data_df)
+    aa_output_df["AA_selected_car_variant"] = [""] * len(test_auto_data_df)
+    aa_output_df["AA_selected_address"] = [""] * len(test_auto_data_df)
 
 
 # a function to open the webdriver (chrome simulation)
@@ -120,6 +127,11 @@ def load_webdriver():
     # loads chromedriver
     global driver # defines driver as a global variableaa
     driver = webdriver.Chrome(service=Service(ChromeDriverManager().install()))
+
+    # setting up driver options settings
+    chrome_options = Options()
+    chrome_options.add_argument('--log-level=3')  # Set logging level to WARNING
+    driver = webdriver.Chrome(options=chrome_options)
 
     # define the implicit wait time for the session
     driver.implicitly_wait(1)
@@ -165,12 +177,6 @@ def aa_auto_scrape(person_i):
 
         # getting the persons birthdate out as a date object (allows us to get the correct format more easily)
         birthdate = test_auto_data_df.loc[person_i,'DOB']
-
-        # formatting the indicidents the individual has had in the last 3 years into an integer (either 0 or 1)
-        if test_auto_data_df.loc[person_i,'Incidents_last3years_AA'] == "No":
-            Incidents_3_year = 0
-        else:
-            Incidents_3_year = 1
 
         # formatting the current insurer information
         current_insurer = test_auto_data_df.loc[person_i, "CurrentInsurer"]
@@ -262,7 +268,7 @@ def aa_auto_scrape(person_i):
                     "Birthdate_month":birthdate.strftime("%B"),
                     "Birthdate_year":int(birthdate.strftime("%Y")),
                     "Sex":test_auto_data_df.loc[person_i,'Gender'],
-                    "Incidents_3_year":Incidents_3_year,
+                    "Incidents_3_year":int(test_auto_data_df.loc[person_i,'Incidents_last3years_AA']), # number of at fault crashes in the last 3 years
                     "Current_insurer":current_insurer,
                     "Additional_drivers":additional_drivers,
                     "Agreed_value":str(round(float(test_auto_data_df.loc[person_i,'AgreedValue']))), # rounds the value to nearest whole number, converts to an integer then into a sting with no dp
@@ -271,13 +277,18 @@ def aa_auto_scrape(person_i):
         
         
         # adding info on the date and type of incident to the aa_data dictionary ONLY if the person has had an incident within the last 5 years
-        incident_date = test_auto_data_df.loc[person_i,'Date_of_incident']
-        if aa_data["Incidents_3_year"] == 1:
-            aa_data["Incident_date_month"] = incident_date.strftime("%B")
-            aa_data["Incident_date_year"] = int(incident_date.strftime("%Y"))
+        if aa_data["Incidents_3_year"] > 0:
+            # saving all the incident dates
+            for i in range(1, aa_data["Incidents_3_year"] + 1):
+                incident_date = test_auto_data_df.loc[person_i,f'Date_of_incident{i}']
+                aa_data[f"Incident{i}_date_month"] = incident_date.strftime("%B")
+                aa_data[f"Incident{i}_date_year"] = int(incident_date.strftime("%Y"))
+
+            # saving the incident type
             incident_type = test_auto_data_df.loc[person_i,'Type_incident'].lower()
             aa_data["Incident_type"] = "" # initialise "Incident type variable"
-            if "not at fault" in incident_type or "no other vehicle involved" in incident_type: # if the accident was not at fault and the accident did not involve another vehicle
+
+            if "not at fault" in incident_type and "no other vehicle involved" in incident_type: # if the accident was not at fault and the accident did not involve another vehicle
                 aa_data["Incident_type"] = "Any claims where no excess was payable" # mapped 'Not at fault -other vehicle involved' to this
             elif "not at fault" in incident_type: # if the accident was not at fault and the accident involved another vehicle
                 aa_data["Incident_type"] = "Any claims where no excess was payable" # mapped 'Not at fault -other vehicle involved' to this
@@ -338,6 +349,11 @@ def aa_auto_scrape(person_i):
 
                 # checking if we have managed to isolate one option
                 if len(selected_car_variants) == 1:
+                    # saving the select model variant to the output df
+                    partial_car_variant = driver.find_element(By.XPATH, '//*[@id="vehicleDetailSummaryBoxAlt"]/div/div[2]').text
+                    aa_output_df.loc[person_i, "AA_selected_car_variant"] = f"{partial_car_variant} {selected_car_variants[0].text}".replace("Found: ","").replace("\n","")
+
+                    # returning the selected car variant
                     return selected_car_variants[0]
                 elif len(selected_car_variants) > 1:
                     car_variant_options = tuple(selected_car_variants)
@@ -352,6 +368,11 @@ def aa_auto_scrape(person_i):
 
                 if len(car_variant.text) < len(final_car_variant.text):
                     final_car_variant = car_variant
+
+            # saving the select model variant to the output df
+            partial_car_variant = driver.find_element(By.XPATH, '//*[@id="vehicleDetailSummaryBoxAlt"]/div/div[2]').text
+
+            aa_output_df.loc[person_i, "AA_selected_car_variant"] = f"{partial_car_variant} {final_car_variant.text}".replace("Found: ","").replace("\n"," ")
 
             return final_car_variant
 
@@ -394,8 +415,50 @@ def aa_auto_scrape(person_i):
         
             time.sleep(2) # wait for page to load
 
-            
+        def enter_registration_number():
+            if data["Registration_number"] == "": # if the vehicle registration number is NA then raise an exception (go to except block, skip rest of try)
+                raise Exception("Registration_NA")
+            else:
+                driver.find_element(By.ID, "vehicleRegistrationNumberNz").send_keys(data["Registration_number"]) # input registration number
+                driver.find_element(By.ID, "vehicleRegistrationSearchButtonNz").click() # click check button
+
+                time.sleep(1.5) # wait for page to load
+
+                # attempt to find the for car summary pop down (if present then we can continue)
+                Wait.until(EC.visibility_of_element_located( (By.ID,  "vehicleDetailSummaryBoxAlt")))
         
+        def enter_car_details_manually():
+
+            # if the vehicle registration number is NA then we need to click this button (else if the registration number is just invalid we dont)
+            if data["Registration_number"] == "" or not use_registration_number: 
+                Wait10.until(EC.element_to_be_clickable((By.ID, "modelSelector-button")) ).click() # click Model Selector button
+
+            try:
+                # find year of manufacture list and select the correct year
+                dropdown = Select(driver.find_element(By.ID, "vehicleYearOfManufactureList"))
+                dropdown.select_by_value(str(data["Vehicle_year"]))
+
+                time.sleep(1) # wait for page to load
+
+                # find car make (manufacturer) list and select the correct manufacturer
+                dropdown = Select(driver.find_element(By.ID, "vehicleMakeList"))
+                dropdown.select_by_value(data["Manufacturer"].upper())
+
+                time.sleep(2) # wait for page to load
+
+                # checking if the car model is already input, if not already input selects correct model
+                car_info_input_testings("vehicleModelList", data["Model"].upper(), 2) 
+
+                # checking if the car transmission is already input, if not already input selects correct transmission type (auto, manual, or other)
+                car_info_input_testings("vehicleTransmissionList", data["Automatic"][0], 1)  # only the 1st letter needed
+
+                # checking if the car body type is already input, if not already input selects correct body type
+                car_info_input_testings("vehicleBodyTypeList", data["Body_type"], 0) 
+            except:
+                print(f"Couldn't find {data["Vehicle_year"]} {data["Manufacturer"]} {data["Model"]} with body type {data["Body_type"]} and {data["Automatic"]} transmission", end=" -- ")
+                return None
+
+            driver.find_element(By.ID, "findcar").click()  # click find your car button
 
 
 
@@ -417,51 +480,15 @@ def aa_auto_scrape(person_i):
         else:
             Wait.until(EC.element_to_be_clickable( (By.XPATH, "//*[@id='aaMembershipDetails.aaMemberButtons']/label[2]/span") ) ).click()
 
-
+        
         # attempt to input the car registration number (if it both provided and valid)
-        try: 
-            if data["Registration_number"] == "": # if the vehicle registration number is NA then raise an exception (go to except block, skip rest of try)
-                raise Exception("Registration_NA")
+        try:
+            if use_registration_number:
+                enter_registration_number()
             else:
-                driver.find_element(By.ID, "vehicleRegistrationNumberNz").send_keys(data["Registration_number"]) # input registration number
-                driver.find_element(By.ID, "vehicleRegistrationSearchButtonNz").click() # click check button
-
-                time.sleep(1.5) # wait for page to load
-
-                # attempt to find the for car summary pop down (if present then we can continue)
-                Wait.until(EC.visibility_of_element_located( (By.ID,  "vehicleDetailSummaryBoxAlt")))
+                raise Exception("Not Using Registration Number!")
         except: # if the registration is invalid or not provided, then need to enter car details manually
-                
-                if data["Registration_number"] == "": # if the vehicle registration number is NA then we need to click this button (else if the registration number is just invalid we dont)
-                    Wait10.until(EC.element_to_be_clickable((By.ID, "modelSelector-button")) ).click() # click Model Selector button
-
-                try:
-                    # find year of manufacture list and select the correct year
-                    dropdown = Select(driver.find_element(By.ID, "vehicleYearOfManufactureList"))
-                    dropdown.select_by_value(str(data["Vehicle_year"]))
-
-                    time.sleep(1) # wait for page to load
-
-                    # find car make (manufacturer) list and select the correct manufacturer
-                    dropdown = Select(driver.find_element(By.ID, "vehicleMakeList"))
-                    dropdown.select_by_value(data["Manufacturer"].upper())
-
-                    time.sleep(2) # wait for page to load
-
-                    # checking if the car model is already input, if not already input selects correct model
-                    car_info_input_testings("vehicleModelList", data["Model"].upper(), 2) 
-
-                    # checking if the car transmission is already input, if not already input selects correct transmission type (auto, manual, or other)
-                    car_info_input_testings("vehicleTransmissionList", data["Automatic"][0], 1)  # only the 1st letter needed
-
-                    # checking if the car body type is already input, if not already input selects correct body type
-                    car_info_input_testings("vehicleBodyTypeList", data["Body_type"], 0) 
-                except:
-                    print(f"Couldn't find {data["Vehicle_year"]} {data["Manufacturer"]} {data["Model"]} with body type {data["Body_type"]} and {data["Automatic"]} transmission", end=" -- ")
-                    return None
-
-                driver.find_element(By.ID, "findcar").click()  # click find your car button
-
+            enter_car_details_manually()
         
         # check if we need to select a model variant
         try:
@@ -478,7 +505,12 @@ def aa_auto_scrape(person_i):
             # click the selected model variant
             selected_model_variant_element.click()
 
+
         except exceptions.TimeoutException: # if we dont need to select a model variant then continue on
+            selected_car_variant = driver.find_element(By.XPATH, '//*[@id="vehicleDetailSummaryBoxAlt"]/div/div[2]').text
+
+            # saving the select model variant to the output df
+            aa_output_df.loc[person_i, "AA_selected_car_variant"] = selected_car_variant.replace("Found: ","").replace("\n"," ")
             pass
             
         # click button to move to car features page
@@ -507,7 +539,7 @@ def aa_auto_scrape(person_i):
         driver.find_element(By.ID, "_eventId_submit").click()
 
         # select whether the car was purchased on finance
-        if data["Finance_purchase"].upper() == "NO":
+        if data["Finance_purchase"].lower() == "no":
             Wait10.until(EC.element_to_be_clickable( (By.XPATH, "//*[@id='vehicleFinance.financedButtons']/label[2]/span") )).click() # click "No" Finance" button
         else:
             Wait10.until(EC.element_to_be_clickable( (By.XPATH, "//*[@id='vehicleFinance.financedButtons']/label[1]/span") )).click() # click "Yes" Finance" button
@@ -531,6 +563,8 @@ def aa_auto_scrape(person_i):
         finally: # input street address
             Wait.until(EC.element_to_be_clickable((By.ID, "address.streetAddress")) ).send_keys(data["Street_address"]) # inputting street address
 
+        aa_output_df.loc[person_i, "AA_selected_address"] = f"{data["Street_address"]}, {data["Suburb"]}, {data["Postcode"]}"
+
         # click button to move to driver details page
         driver.find_element(By.ID, "_eventId_submit").click()
 
@@ -541,8 +575,14 @@ def aa_auto_scrape(person_i):
 
         except exceptions.TimeoutException: # go here only if the pop up does appear
             try:
-                driver.find_element(By.XPATH, "//*[@id='suggestedAddresses-container']/div[2]/div/label/span[contains(text(), '{}') and contains(text(), '{}')]".format(data["Street"].lower().title(),
-                                                                                                                                                                      data["Postcode"])).click() # clicking the address that has the correct street name and postcode
+                # finding the options that has the correct street name and postcode
+                address_element = driver.find_element(By.XPATH, f"//*[@id='suggestedAddresses-container']/div[2]/div/label/span[contains(text(), '{data["Street"].lower().title()}') and contains(text(), '{data["Postcode"]}')]")
+
+                # write the selected address to the output dataframe
+                aa_output_df.loc[person_i, "AA_selected_address"] = address_element.text
+
+                address_element.click() # clicking the address that has the correct street name and postcode
+
             except exceptions.NoSuchElementException:
                 print(f"Couldn't find address, {data["Street_address"]}, {data["Suburb"]} with postcode {data["Postcode"]}", end=" - ")
                 return None
@@ -561,7 +601,7 @@ def aa_auto_scrape(person_i):
         driver.find_element(By.XPATH, "//*[@id='mainDriver.dateOfBirth-year']//*[text()='{}']".format(data["Birthdate_year"])).click() # select main driver DOB year
 
         # select gender of main driver
-        if data["Sex"] == "Male":
+        if data["Sex"].lower() == "male":
             driver.find_element(By.XPATH, "//*[@id='mainDriver.driverGenderButtons']/label[1]/span").click() # clicking the 'Male' button
         else: #is Female
             driver.find_element(By.XPATH, "//*[@id='mainDriver.driverGenderButtons']/label[2]/span").click() # clicking the 'Female' button
@@ -574,21 +614,19 @@ def aa_auto_scrape(person_i):
         Wait.until(EC.element_to_be_clickable( (By.XPATH, "//*[@id='allPreviousInsurerOptionGroup']/option[contains(text(),'{}')]".format(data["Current_insurer"])) )).click() # click the correct 'previous insurer'
 
         # click the button saying how many accidents you have been in in last 3 years
-        if data["Incidents_3_year"] == 0: # if the person has NOT been in an incident in the last 3 years
-            driver.find_element(By.XPATH, "//*[@id='mainDriverNumberOfAccidentsOccurrencesButtons']/label[1]/span").click()
-        else: # if the person has been in an incident in the last 3 years
-            driver.find_element(By.XPATH, "//*[@id='mainDriverNumberOfAccidentsOccurrencesButtons']/label[2]/span").click() # click button to say 1 "incident" in last 3 years
-            driver.find_element(By.ID, "mainDriver.accidentTheftClaimOccurrenceList[0].occurrenceType.accidentTheftClaimOccurrenceType").click() # click button to open type of occurrence pop down
-            driver.find_element(By.XPATH, "//*[@id='mainDriver.accidentTheftClaimOccurrenceList[0].occurrenceType.accidentTheftClaimOccurrenceType']/option[text() ='{}']".format(data["Incident_type"])).click() # select the type of occurrence
+        driver.find_element(By.XPATH, f"//*[@id='mainDriverNumberOfAccidentsOccurrencesButtons']/label[{data['Incidents_3_year']+1}]/span").click() # click button to say 1 "incident" in last 3 years
+
+        # input the details for all of the recent incidents (if it is 0, then it goes right past)
+        for i in range(0, data['Incidents_3_year']):
+            driver.find_element(By.ID, f"mainDriver.accidentTheftClaimOccurrenceList[{i}].occurrenceType.accidentTheftClaimOccurrenceType").click() # click button to open type of occurrence pop down
+            driver.find_element(By.XPATH, f"//*[@id='mainDriver.accidentTheftClaimOccurrenceList[{i}].occurrenceType.accidentTheftClaimOccurrenceType']/option[text() ='{data["Incident_type"]}']").click() # select the type of occurrence
             
             # input the approximate date it occured
-            driver.find_element(By.ID, "mainDriver.accidentTheftClaimOccurrenceList[0].monthOfOccurrence.month").click() # open the month dropdown
-            driver.find_element(By.XPATH, "//*[@id='mainDriver.accidentTheftClaimOccurrenceList[0].monthOfOccurrence.month']/option[text() ='{}']".format(data["Incident_date_month"])).click() # month selection
-            driver.find_element(By.ID, "mainDriver.accidentTheftClaimOccurrenceList[0].yearOfOccurrence.year").click() # open the year dropdown
-            driver.find_element(By.XPATH, "//*[@id='mainDriver.accidentTheftClaimOccurrenceList[0].yearOfOccurrence.year']/option[text() ='{}']".format(data["Incident_date_year"])).click() # year selection
+            driver.find_element(By.ID, f"mainDriver.accidentTheftClaimOccurrenceList[{i}].monthOfOccurrence.month").click() # open the month dropdown
+            driver.find_element(By.XPATH, f"//*[@id='mainDriver.accidentTheftClaimOccurrenceList[{i}].monthOfOccurrence.month']/option[text() ='{data[f"Incident{i+1}_date_month"]}']").click() # month selection
+            driver.find_element(By.ID, f"mainDriver.accidentTheftClaimOccurrenceList[{i}].yearOfOccurrence.year").click() # open the year dropdown
+            driver.find_element(By.XPATH, f"//*[@id='mainDriver.accidentTheftClaimOccurrenceList[{i}].yearOfOccurrence.year']/option[text() ='{data[f"Incident{i+1}_date_year"]}']").click() # year selection
             
-
-
         # click button to specify how many additional drivers there are
         if data["Additional_drivers"] == 0:
             driver.find_element(By.XPATH, "//*[@id='numberOfAdditionalDriversButtons']/label[1]/span").click()
@@ -627,9 +665,6 @@ def aa_auto_scrape(person_i):
         # returning the monthly/yearly premium and the adjusted agreed value
         return monthly_premium, yearly_premium
 
-    
-
-
 
 
     # get time of start of each iteration
@@ -652,13 +687,13 @@ def aa_auto_scrape(person_i):
             aa_output_df.loc[person_i, "AA_Error_code"] = "Unknown Error"
 
     except:
-        #try: # checks if the reason our code failed is because the 'we need more information' pop up appeareds
-        Wait.until(EC.visibility_of_element_located( (By.XPATH, "//*[@id='ui-id-3' and text() = 'We need more information']") ) )
-        #    print("Need more information", end= " -- ")
-        #    aa_output_df.loc[person_i, "AA_Error_code"] = "Webiste Does Not Quote For This Car Variant"
-        #except exceptions.TimeoutException:
-        #    print("Unknown Error!!", end= " -- ")
-        #    aa_output_df.loc[person_i, "AA_Error_code"] = "Unknown Error"
+        try: # checks if the reason our code failed is because the 'we need more information' pop up appeareds
+            Wait.until(EC.visibility_of_element_located( (By.XPATH, "//*[@id='ui-id-3' and text() = 'We need more information']") ) )
+            print("Need more information", end= " -- ")
+            aa_output_df.loc[person_i, "AA_Error_code"] = "Webiste Does Not Quote For This Car Variant"
+        except exceptions.TimeoutException:
+            print("Unknown Error!!", end= " -- ")
+            aa_output_df.loc[person_i, "AA_Error_code"] = "Unknown Error"
 
     end_time = time.time() # get time of end of each iteration
     print("Elapsed time:", round(end_time - start_time,2)) # print out the length of time taken
@@ -668,15 +703,29 @@ def auto_scape_all():
     # performing all data reading in and preprocessing
     dataset_preprocess()
 
-    # save the start index and the number of cars in the dataset as a variable (reading it from the standard input that the 'parent' process passes in)
+    ## reading in variables from the standard input that the 'parent' process passes in
     input_indexes = input()
     input_indexes = input_indexes.replace("[", "").replace("]", "").split(",")
-    input_indexes = list(map(int, input_indexes))
+
+    # saving whether or not to use car registration number while scraping?
+    global use_registration_number
+    if input_indexes[0] == "Y":
+        use_registration_number = True
+    else:
+        use_registration_number = False
+
+    # save the start index and the number of cars in the dataset as a variable
+    input_indexes = list(map(int, input_indexes[1:]))
+
+
 
     # loop through all cars in test spreadsheet
     for person_i in input_indexes: 
 
         print(f"{person_i}: AA: ", end = "") # print out the iteration number
+
+        # set for this person, the PolicyStartDate to todays date
+        test_auto_data_df.loc[person_i, "PolicyStartDate"] = datetime.strftime(date.today(), "%d/%m/%Y")
 
         # run on the ith car/person
         aa_auto_scrape(person_i)

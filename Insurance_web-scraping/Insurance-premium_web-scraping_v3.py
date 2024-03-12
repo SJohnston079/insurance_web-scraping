@@ -13,8 +13,10 @@ import time
 # data management/manipulation related imports
 import pandas as pd
 from datetime import datetime, date
+from dateutil.relativedelta import relativedelta
 import math
 import os
+import sys
 
 # other imports 
 import subprocess as sp
@@ -59,8 +61,14 @@ def export_auto_dataset(indexes):
     # reduce the length of test_auto_data to be equal to the specified number of cars
     output_df = test_auto_data.iloc[indexes]
 
+    # setting output_df 'Sample Number' to be an integer
+    output_df.loc[:,'Sample Number'] = output_df.loc[:,'Sample Number'].astype('int64')
+
+    # converting all missing values into empty strings
+    output_df = output_df.fillna('')
+
     # set the policy start date to be equal to be todays date (as all of the individual company dfs have the polciy start date as todays date)
-    output_df.loc[:, 'PolicyStartDate'] = individual_company_dfs['AA']['PolicyStartDate'].values[0]
+    output_df.loc[:, 'PolicyStartDate'] = individual_company_dfs[insurance_companies[0]]['PolicyStartDate'].values[0]
 
     # removing columns from the individual company dfs that we dont want in the final output
     individual_company_dfs = [individual_company_dfs[company].drop(["PolicyStartDate", f"{company}_agreed_value"], axis=1) for company in insurance_companies]
@@ -71,28 +79,74 @@ def export_auto_dataset(indexes):
     # export the dataframe to the csv
     output_df.to_csv("scraped_auto_premiums.csv", index=False) 
 
+# defining the optimal allocation of the examples we need to scrape for each company, onto up to 10 chromedriver windows
+def optimal_allocation(indexes_dict):
+    # defining a variable to store the window allocations (calculates the approx time for each company to run, given each has only 1 window)
+    approximate_total_times = {company:len(company_indexes)*company_times[company] for company, company_indexes in indexes_dict.items()}
+
+    # initialising window allocation variable
+    window_allocations = {company:1 for company in insurance_companies}
+
+    # allocate the number of windows
+    while sum(window_allocations.values()) < int(max_windows):
+        # find the company which has the highest approximated time to execute
+        max_time_company = max(approximate_total_times, key=approximate_total_times.get)
+
+        # assign an extra window to the company which has the highest approximated time to execute
+        window_allocations[max_time_company] += 1
+
+        # recalculate the time to execute for the company which has had another window allocated to it
+        approximate_total_times[max_time_company] *= (window_allocations[max_time_company]-1)/window_allocations[max_time_company]
+    
+
+    # ensuring that each company has enough examples to split into its assigned number of windows
+    for company in insurance_companies:
+        if window_allocations[company] > len(indexes_dict[company]): # if the number of windows assigned to the company is more than the number of examples that company has to do
+            window_allocations[company] = len(indexes_dict[company])
+
+    return window_allocations
+
 # defining a function to run a single subprocess, is called by 'running_the_subprocesses'
 def run_subprocess(args):
     # saving the arguments as more intuitive names
-    company, row_indexes = args[0], args[1]
+    use_registration_number, company, row_indexes = args[0], args[1], args[2]
     # running the process (the python file)
     process = sp.Popen(['python', f'Individual-company_scraper-files\\insurance-premium_web-scraping_{company}.py'], stdin=sp.PIPE, text=True)
 
-    process.communicate(input=str(row_indexes)) # passing all of the row indexes into the process as a standard input
+    process.communicate(input=str( [use_registration_number]+row_indexes )) # passing all of the row indexes into the process as a standard input
 
 # defining a function to run all the subprocesses
-def runnning_the_subprocesses(indexes):
+def runnning_the_subprocesses(indexes_dict):
+    # getting the optimal allocation of companies to a number of windows to scrape the fastest
+    optimal_window_allocation = optimal_allocation(indexes_dict)
+
     # defining the arugments to be passed down into the subprocesses
     args = []
     for company in insurance_companies:
-        if len(indexes[company]) > 0:
+        # define for each company, windows they should scrape from, by defining the indexes each are responsible for
+        num_windows = optimal_window_allocation[company]
+        num_examples = len(indexes_dict[company])
+
+        for i in range(num_windows):
+            start_index = (i*num_examples)//num_windows
+            end_index = ((i+1)*num_examples)//num_windows
+
+            if i == 0: # if is the 1st window
+                args.append( (use_registration_number, company, indexes_dict[company][:end_index]) )
+            elif i + 1 == num_windows: # if is the last window
+                args.append( (use_registration_number, company, indexes_dict[company][start_index:]) )
+            else: # if is a window in the middle
+                args.append( (use_registration_number, company, indexes_dict[company][start_index:end_index]) )
+        '''
+        if len(indexes_dict[company]) > 0:
             # if there are at least 2 row to scrape for tower, split tower into 2 seperate processes
-            if company == "Tower" and len(indexes["Tower"]) >= 2:
-                midpoint = (len(indexes["Tower"]) + 1) // 2
-                args.append( ("Tower", indexes["Tower"][:midpoint]) )
-                args.append( ("Tower", indexes["Tower"][midpoint:]) )
+            if company == "Tower" and len(indexes_dict["Tower"]) >= 2:
+                midpoint = (len(indexes_dict["Tower"]) + 1) // 2
+                args.append( (use_registration_number, "Tower", indexes_dict["Tower"][:midpoint]) )
+                args.append( (use_registration_number, "Tower", indexes_dict["Tower"][midpoint:]) )
             else:
-                args.append((company, indexes[company]))
+                args.append((use_registration_number, company, indexes_dict[company]))
+        '''
 
     # Start all the processes
     with multiprocessing.Pool() as pool:
@@ -177,8 +231,72 @@ def redo_website_scrape_errors(start_i, end_i, indexes):
 def delete_intermediary_csvs():
     file_csvs = [f"{file_directory}\\Individual-company_data-files\\{company.lower()}_scraped_auto_premiums.csv" for company in insurance_companies] + [f"{file_directory}\\test_auto_data1.csv"]
     for file_csv in file_csvs:
-        os.remove(file_csv)
+        try:
+            os.remove(file_csv)
+        except FileNotFoundError:
+            pass
 
+# performing dataset preprocessing that all companies will inherit
+def dataset_preprocess():
+    def incident_dates_calc(row):
+
+        # defining a variable to store the output in
+        incident_date_list = []
+
+        # defining the number of incidient in the last 3 and 5 years for this person as a local variable
+        num_incidents_3_year = row["Incidents_last3years_AA"]
+        num_incidents_5_year = row["Incidents_last5years_AMISTATE"]
+
+
+        # handle first incident date
+        if num_incidents_5_year > 0:
+            incident_date_list.append(datetime.strftime(row["PolicyStartDate"] - relativedelta(months=row["Month Since Last Claim"]), "%Y/%m/%d"))
+
+            if num_incidents_3_year > 0:
+                # calculate the dates for all incidents within 3 years
+                step3year = (3*12-row["Month Since Last Claim"])//(num_incidents_3_year)
+                for i in range(1, num_incidents_3_year):
+                    incident_date_list.append(datetime.strftime(row["PolicyStartDate"] - relativedelta(months= step3year*i + num_incidents_3_year) - relativedelta(weeks=1), "%Y/%m/%d"))
+
+                # calculate the dates for all incidents within 5 years
+                num_incidents3_to_5_years = num_incidents_5_year - num_incidents_3_year
+
+                if num_incidents3_to_5_years > 0:
+                    step5year = ((5-3)*12)//(num_incidents3_to_5_years)
+                    for i in range(1, num_incidents3_to_5_years + 1):
+                        incident_date_list.append(datetime.strftime(row["PolicyStartDate"] - relativedelta(months= step5year*i + 3*12) - relativedelta(weeks=1), "%Y/%m/%d"))
+            else:
+                # calculate the dates for all incidents within 5 years
+                step5year = (5*12)//(num_incidents_5_year)
+                for i in range(1, num_incidents_5_year + 1):
+                    incident_date_list.append(datetime.strftime(row["PolicyStartDate"] - relativedelta(months= step5year*i) - relativedelta(weeks=1), "%Y/%m/%d"))
+
+
+
+        # for all remaining incident date variables, set to empty string
+        while len(incident_date_list) < 5:
+            incident_date_list.append(pd.NaT)
+
+        # returning the output
+        return incident_date_list
+
+    # read in the test dataset
+    global test_auto_data
+    test_auto_data = pd.read_excel(test_auto_data_xlsx, dtype={"Postcode":"int"})
+    
+    # setting up the incident dates (given the number of incidents in the last 3 and 5 years, assigns each incident a date)
+    incident_dates = test_auto_data.apply(lambda row: incident_dates_calc(row), axis=1)
+    incident_dates = [list(x) for x in zip(*incident_dates)] # reformatting the output to allow the values to be saved to the dataframe
+
+    for i in range(5):
+        test_auto_data.loc[:,f"Date_of_incident{i+1}"] = incident_dates[i]
+    
+    # converts all variables to type string
+    test_auto_data = test_auto_data.astype(str)
+    test_auto_data.fillna("") # setting all NA values to be an empty string
+
+    # output a csv which the subprocesses will read from
+    test_auto_data.to_csv("test_auto_data1.csv", index=False) 
 """
 -------------------------
 """
@@ -204,44 +322,81 @@ def auto_scape_all():
     insurance_companies = ["AA", "AMI", "Tower"]
     insurance_companies = select_insurance_companies()
 
-    print(f"Scraping from {insurance_companies}")
+    # checks to make sure at least 1 company was selected to scrape from
+    if len(insurance_companies) == 0:
+        raise Exception("Must Select at LEAST one company to scrape from")
+
+    print(f"Scraping from {insurance_companies}", end="\n\n")
+
+    # get whether or not Registration numbers should be allowed to be used in the scraping process
+    global use_registration_number
+    use_registration_number = input("Should Registration Number be used in the scraping process? (Enter Y for Yes and N for No): ").upper()
+    while not ( use_registration_number in ("Y","N") ):
+        use_registration_number = input("Try again (Enter either 'Y' for Yes OR 'N' for No): ").upper()
 
     # delete intermediary (individual company) csvs (ensuring blank slate start)
     delete_intermediary_csvs()
 
     # read in the test dataset
-    global test_auto_data
-    test_auto_data = pd.read_excel(test_auto_data_xlsx, dtype={"Postcode":"int"})
-    test_auto_data = test_auto_data.astype(str) # converts all variables to type string
-    test_auto_data.fillna("") # setting all NA values to be an empty string
-    test_auto_data.to_csv("test_auto_data1.csv", index=False) # output a csv which the subprocesses will read from
+    dataset_preprocess()
 
 
     # saving the length of test_auto_data as num_cars
-    num_cars = 1
+    num_cars = 5
     #num_cars = len(test_auto_data)
 
-    # estimate the number of seconds testing all cars on each company website will take
-    approximate_total_times = [(time * num_cars) for time in [46, 40, 85/2]]
+    # defining the company times taken to scrape
+    global company_times
+    company_times = {"AA":50, "AMI":50, "Tower":90}
+    company_times = {company:company_times[company] for company in insurance_companies} # redefing the variable to only save for companies that have been chosen
+    
+
+    # defining the row indexes of all of the cars we are going to scrape
+    indexes = [i for i in range(num_cars)]
+    #import random
+    #indexes = sorted( [random.randrange(0,2000) for i in range(num_cars)] )
+    indexes_dict = {company:indexes for company in insurance_companies}
+
+
+    # defining the maximum number of allowed windows
+    global max_windows
+    max_windows = input(f"Choose the maximum number of browser windows to use (more can be quicker if your computers CPU can handle it (but not always)) (Recommended {len(insurance_companies)}-7):")
+    while not max_windows.isdigit():
+        max_windows = input("Must input only digits. The max number of browser windows to allow: ")
+
+    # setting max_windows to be an integer
+    max_windows = int(max_windows)
+
+    # ensuring that there is at least 1 window per company that we wish to scrape from 
+    if max_windows < len(insurance_companies):
+        max_windows = len(insurance_companies)
+    # printing newlines for more readable output
+    print("\n\n")
+
+    # calculating an estimate for the length of time the program needs to run
+    window_allocations = optimal_allocation(indexes_dict)
+    approximate_total_times = [time*(num_cars/window_allocations[company]) for company, time in company_times.items()]
     total_time_hours = max(approximate_total_times)*1.5 / 3600 # convert seconds to hours for the estimated longest time
     total_time_minutes = round((total_time_hours - int(total_time_hours)) * 60) # reformat into minute and hours
     total_time_hours = math.floor(total_time_hours)
 
+    # constructing the string to print out our time estimate
+    time_estimate_string = f"Program will take approximately {total_time_hours} hours and {total_time_minutes} minutes to scrape the premiums for {num_cars} cars on the "
+    if len(insurance_companies) == 3:
+        time_estimate_string += "AA, AMI and Tower Websites"
+    if len(insurance_companies) == 2:
+        time_estimate_string += f"{insurance_companies[0]} and {insurance_companies[1]} Websites"
+    if len(insurance_companies) == 1:
+        time_estimate_string += f"{insurance_companies[0]} Website"
     # print out the time to execute estimate
-    print(f"Program will take approximately {total_time_hours} hours and {total_time_minutes} minutes to scrape the premiums for {num_cars} cars on the AA, AMI and Tower Websites", end="\n\n\n")
-
-    import random
-    # defining the row indexes of all of the cars we are going to scrape
-    #indexes = [i for i in range(num_cars)]
-    indexes = sorted( [random.randrange(0,2000) for i in range(num_cars)] )
-    indexes_dict = {company:indexes for company in insurance_companies}
+    print(time_estimate_string)
 
     # get start time
     start_time = time.time()
 
     # running all of the subprocesses (starting scraping from all website simultaneously)
     runnning_the_subprocesses(indexes_dict)
-
+    
     end_time = time.time() # get time of end of each iteration
     print("Main subprocesses runtime:", round(end_time - start_time,2)) # print out the length of time taken
 
@@ -266,13 +421,13 @@ def auto_scape_all():
     # export the dataset to 'scraped_auto_premiums'
     export_auto_dataset(indexes)
 
-    # delete intermediary (individual company) csvs
+    # delete intermediary (individual company) csvs (ensuring blank slate start)
     delete_intermediary_csvs()
 
 def main():
-
     # scrape all of the insurance premiums for the given car-person combinations
     auto_scape_all()
+
 
 
 # run main() and ensure that it is only run when the code is called directly
