@@ -33,7 +33,7 @@ file_directory = os.path.dirname(file_path)
 os.chdir(file_directory)
 
 ## File path definitions
-test_auto_data_csv = f"{file_directory}\\test_home_data.csv" # defines the path to the input dataset
+test_auto_data_csv = f"{file_directory}\\test_home_data.xlsx" # defines the path to the input dataset
 
 
 
@@ -109,11 +109,11 @@ def optimal_allocation(indexes_dict):
 # defining a function to run a single subprocess, is called by 'running_the_subprocesses'
 def run_subprocess(args):
     # saving the arguments as more intuitive names
-    use_registration_number, company, row_indexes = args[0], args[1], args[2]
+    company, row_indexes = args[0], args[1]
     # running the process (the python file)
-    process = sp.Popen(['python', f'Individual-company_scraper-files\\insurance-premium_web-scraping_{company}.py'], stdin=sp.PIPE, text=True)
+    process = sp.Popen(['python', f'Individual-company_scraper-files\\Insurance_premium_web_scraping_{company}.py'], stdin=sp.PIPE, text=True)
 
-    process.communicate(input=str( [use_registration_number]+row_indexes )) # passing all of the row indexes into the process as a standard input
+    process.communicate(input=str(row_indexes)) # passing all of the row indexes into the process as a standard input
 
 # defining a function to run all the subprocesses
 def runnning_the_subprocesses(indexes_dict):
@@ -241,7 +241,7 @@ def delete_intermediary_csvs():
 def dataset_preprocess():
     # read in the test dataset
     global test_auto_data
-    test_auto_data = pd.read_csv(test_auto_data_csv, dtype={"Postcode":"int"})
+    test_auto_data = pd.read_excel(test_auto_data_csv, dtype={"Postcode":"int"})
 
     # converts all variables to type string
     test_auto_data = test_auto_data.astype(str)
@@ -308,8 +308,6 @@ def auto_scape_all():
         except: # if the num_houses variable is invalid in some way, then set it to an empty string (to prompt again for input)
             num_houses = ""
     
-    
-
 
     # defining the company times taken to scrape
     global company_times
@@ -336,7 +334,7 @@ def auto_scape_all():
         max_windows = len(insurance_companies)
     # printing newlines for more readable output
     print("\n\n")
-
+    '''
     # calculating an estimate for the length of time the program needs to run
     window_allocations = optimal_allocation(indexes_dict)
     approximate_total_times = [time*(num_houses/window_allocations[company]) for company, time in company_times.items()]
@@ -354,7 +352,7 @@ def auto_scape_all():
         time_estimate_string += f"{insurance_companies[0]} Website"
     # print out the time to execute estimate
     print(time_estimate_string)
-
+    '''
     # get start time
     start_time = time.time()
 
@@ -363,7 +361,7 @@ def auto_scape_all():
     
     end_time = time.time() # get time of end of each iteration
     print("Main subprocesses runtime:", round(end_time - start_time,2)) # print out the length of time taken
-
+    '''
     # get start time
     start_time = time.time()
 
@@ -387,7 +385,7 @@ def auto_scape_all():
 
     # delete intermediary (individual company) csvs (ensuring blank slate start)
     delete_intermediary_csvs()
-
+    '''
 def main():
     # scrape all of the insurance premiums for the given car-person combinations
     auto_scape_all()

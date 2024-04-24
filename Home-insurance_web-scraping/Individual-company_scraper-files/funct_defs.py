@@ -18,7 +18,7 @@ import time
 -------------------------
 Useful functions
 """
-def define_file_path(file_name = "test_home_data.csv"):
+def define_file_path(file_name = "test_home_data.xlsx"):
     ## setting the working directory to be the folder this file is located in
     # Get the absolute path of the current Python file
     file_path = os.path.abspath(__file__)
@@ -93,11 +93,11 @@ def load_webdriver():
     driver.implicitly_wait(1)
 
     # defines Wait and Wait10, dynamic wait templates
+    Wait1 = WebDriverWait(driver, 1)
     Wait3 = WebDriverWait(driver, 3)
-
     Wait10 = WebDriverWait(driver, 10)
 
-    return driver, Wait3, Wait10
+    return driver, Wait1, Wait3, Wait10
 
 
 def read_indicies_to_scrape():
@@ -109,11 +109,24 @@ def read_indicies_to_scrape():
     return list(map(int, input_indexes))
 
 
+def choose_excess_value(excess_vals, desired_excess):
+    # Initialize the closest value to a large number
+    closest_value = float('inf')
+    closest_excess = -1
+
+    # Iterate over the list of excess values
+    for i, excess_val in enumerate(excess_vals):
+        if abs(excess_val - desired_excess) < abs(closest_value - desired_excess):
+            closest_value = excess_val
+            closest_index = i
+
+    return excess_vals[closest_index]
+
 
 # performing the data reading in and preprocessing for the given company
 def dataset_preprocess(company):
     # read in the data
-    test_home_data_df = pd.read_csv(define_file_path(file_name = "test_home_data.csv"), dtype={"Postcode":"int"})
+    test_home_data_df = pd.read_excel(define_file_path(), dtype={"Postcode":"int"})
     '''
     # setting all NA values in string columns to to be an empty string
     test_home_data_df = test_home_data_df.apply(lambda x: x.fillna("") if x.dtype == "object" else x)
@@ -123,19 +136,19 @@ def dataset_preprocess(company):
     '''
     ## converts the two values which should be dates into dates
     # convert the date of birth variable into a date object
-    test_home_data_df['DOB'] = pd.to_datetime(test_home_data_df['DOB'], format='%Y-%m-%d')
+    test_home_data_df['DOB'] = pd.to_datetime(test_home_data_df['DOB'], format='%d/%m/%Y')
     '''
     # convert all the date of incident variables into a date objects
     for i in range(1,6):
         test_home_data_df[f'Date_of_incident{i}'] = pd.to_datetime(test_home_data_df[f'Date_of_incident{i}'], format='%Y/%m/%d')
+ 
 
-    # pads out the front of postcodes with zeroes (as excel removes leading zeros)
-    test_home_data_df['Postcode'] = test_home_data_df['Postcode'].apply(funct_defs.postcode_reformat) 
-
-    # creates a new dataframe to save the scraped info
-    global output_df
     '''
-    output_df = test_home_data_df.loc[:, ["Sample Number"]]
+    # pads out the front of postcodes with zeroes (as excel removes leading zeros)
+    test_home_data_df['Postcode'] = test_home_data_df['Postcode'].apply(postcode_reformat)
+    
+    # define a pandas dataframe to output the results from this scraping
+    output_df = test_home_data_df.loc[:, ["Sample Number", "Excess"]]
     '''
     output_df["AA_agreed_value"] = test_home_data_df["AgreedValue"].to_string(index=False).strip().split()
     output_df["AA_monthly_premium"] = ["-1"] * len(test_home_data_df)
@@ -144,6 +157,6 @@ def dataset_preprocess(company):
     output_df["AA_agreed_value_maximum"] = [-1] * len(test_home_data_df)
     output_df["AA_Error_code"] = ["No Error"] * len(test_home_data_df)
     output_df["AA_selected_car_variant"] = [""] * len(test_home_data_df)
-    output_df["AA_selected_address"] = [""] * len(test_home_data_df)
     '''
+    output_df[f"{company}_selected_address"] = [""] * len(test_home_data_df)
     return test_home_data_df, output_df

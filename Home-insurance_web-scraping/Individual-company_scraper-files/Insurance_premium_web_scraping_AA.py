@@ -25,8 +25,8 @@ Useful functions
 # define a function to load the webdriver
 def load_webdriver():
     # loads chromedriver
-    global driver, Wait3, Wait10
-    driver, Wait3, Wait10 = funct_defs.load_webdriver()
+    global driver, Wait1, Wait3, Wait10
+    driver, Wait1, Wait3, Wait10 = funct_defs.load_webdriver()
 
 """
 -------------------------
@@ -37,36 +37,59 @@ def load_webdriver():
 # defining a function to scrape from the given company website (for an individual person/house)
 def aa_home_premium_scrape(person_i):
     # defining a function which take the information from the spreadsheet and formats it so it can be used to scrape premium from aa website
-    def aa_auto_data_format(person_i):
-
+    def aa_home_data_format(person_i):
+        
         # getting the persons birthdate out as a date object (allows us to get the correct format more easily)
         birthdate = test_home_data_df.loc[person_i,'DOB']
+        
+        # formatting the building type
+        building_type = test_home_data_df.loc[person_i, "BuildingType"].upper()
+        if building_type in ["APARTMENT", "BOARDING HOUSE", "RETIREMENT UNIT"]:
+            print("Webiste Does Not Quote For This House/ Person, Issue With BuildingType Column", end=" -- ")
+            return "Webiste Does Not Quote For This House/ Person, Issue With BuildingType Column"
+        elif building_type in ["SEMI DETACHED / TOWNHOUSE", "MULTI UNIT"]: 
+            number_of_units = funct_defs.convert_money_str_to_int(building_type)
+            if (number_of_units < 7 and number_of_units > 0) or building_type == "SEMI DETACHED / TOWNHOUSE":
+                building_type = "6<"
+            elif number_of_units < 11:
+                building_type = "7-10"
+            else:
+                print("Webiste Does Not Quote For This House/ Person, Issue With BuildingType Column", end=" -- ")
+                return "Webiste Does Not Quote For This House/ Person, Issue With BuildingType Column"
+            
+        else:
+            building_type = building_type.title() # converts the building type string into a string where the first letter or each word is a capital letter, and the others are not
 
         # define a dict to store information for a given house/person
         data  = {'Has_permanent_residents': not test_home_data_df.loc[person_i,'Occupancy'] == 'Rented',
                 'Street_address':f"{test_home_data_df.loc[person_i,'Street_number']} {test_home_data_df.loc[person_i,'Street_name']} {test_home_data_df.loc[person_i,'Street_type']}",
                 "Birthdate_day":birthdate.strftime("%d"),
                 "Birthdate_month":birthdate.strftime("%B"),
-                "Birthdate_year":birthdate.strftime("%Y")
+                "Birthdate_year":birthdate.strftime("%Y"),
+                "Other_policies": "YES" in [test_home_data_df.loc[person_i, insurance_type].upper() for insurance_type in ("CarInsurance", "ContentsInsurance", "FarmInsurance", "BoatInsurance")],
+                "Building_type":building_type
                  }
         return data
-
+    
 
     # scrapes the insurance premium for a single vehicle/person at aa
-    def aa_auto_scrape_premium(data):
+    def aa_home_scrape_premium(data):
         
         ## opening a window to get home insurance premium from
-        if test_home_data_df.loc[person_i,'Occupancy'] == 'Unoccupied': # if the house is unoccupied
-            # if the house is unoccupied, we must call in to get cover (so cannot be scraped)
+        if test_home_data_df.loc[person_i,'Occupancy'].upper() in ['UNOCCUPIED', 'BOARDING HOUSE']: # if the house is unoccupied or is a boarding house
+            # if the house is unoccupied or is a boarding house, we must call in to get cover (so cannot be scraped)
             return "Doesn't Cover" 
         
-        elif test_home_data_df.loc[person_i,'Occupancy'] in ['Owner occupied', 'Holiday home', 'Let to family/employees']: # if can be covered by standard home insurance
+        elif test_home_data_df.loc[person_i,'Occupancy'].upper() in ['OWNER OCCUPIED', 'HOLIDAY HOME', 'LET TO FAMILY/EMPLOYEES']: # if can be covered by standard home insurance
             # selects 'Home Insurance'
             Wait10.until(EC.element_to_be_clickable((By.XPATH, '//*[@id="page"]/main/div[1]/div[2]/div[2]/div/div[1]/div[1]/div/ul/li[1]/a/div[2]/span'))).click() 
 
-        elif test_home_data_df.loc[person_i,'Occupancy'] == 'Rented':
+        elif test_home_data_df.loc[person_i,'Occupancy'].upper() == 'RENTED':
             # selects 'Landlord Insurance'
             Wait10.until(EC.element_to_be_clickable((By.XPATH, '//*[@id="page"]/main/div[1]/div[2]/div[2]/div/div[1]/div[1]/div/ul/li[6]/a/div[2]/span'))).click() 
+        else:
+            print("Data Entry ERROR - Occupancy column", end=' -- ')
+            return "Invalid Input Data Error: Occupancy Column"
 
 
         time.sleep(1) # wait for the page to load
@@ -90,6 +113,7 @@ def aa_home_premium_scrape(person_i):
 
         # Select the cover type (Am currently just always selecting House only insurance)
         driver.find_element(By.XPATH, '//*[@id="coverTypeButtons"]/label[1]/span').click()
+        time.sleep(2) # wait for the page to load
 
 
         ## entering the house address
@@ -98,19 +122,36 @@ def aa_home_premium_scrape(person_i):
         suburb_input_box.send_keys(str(test_home_data_df.loc[person_i,'Postcode'])) # entering the postcode into the input box
         Wait3.until(EC.element_to_be_clickable((By.XPATH, f'//*[@id="insuranceOptions"]/fieldset[4]/div[1]/div/ul/li[contains(text(), "{test_home_data_df.loc[person_i,'Suburb']}")]'))).click() # select the dropdown with the correct suburb
 
-
         # entering the street address (street name, type and number)
         street_address_input_box = driver.find_element(By.ID, "address.streetAddress")
         street_address_input_box.send_keys(data["Street_address"]) # entering the postcode into the input box
 
+        # scraping the resulting address
+        output_df.loc[person_i, "AA_selected_address"] = f"{street_address_input_box.get_attribute("value")} {suburb_input_box.get_attribute("value")}"
 
 
         # entering the policy holders data of birth
         Select(driver.find_element(By.ID, 'dateOfBirth-day')).select_by_value(data["Birthdate_day"])
         Select(driver.find_element(By.ID, 'dateOfBirth-month')).select_by_visible_text(data["Birthdate_month"])
         Select(driver.find_element(By.ID, 'dateOfBirth-year')).select_by_visible_text(data["Birthdate_year"])
-
         
+        # if the person has other policies with this insurer (AA)
+        if data["Other_policies"]:
+            driver.find_element(By.XPATH, '//*[@id="existingSuncorpPoliciesButtons"]/label[1]/span/span').click() # click the 'Yes' button
+        else:
+            driver.find_element(By.XPATH, '//*[@id="existingSuncorpPoliciesButtons"]/label[2]/span/span').click() # click the 'No' button
+
+
+        # select who the persons most recent insurer was
+        recent_insurer_dropdown = Select(driver.find_element(By.ID, "previousInsurer"))
+        recent_insurer_dropdown.options[1] # choose the second optgroup 'All Insurers'
+        recent_insurer_dropdown.select_by_visible_text(test_home_data_df.loc[person_i, "CurrentInsurer"]) # select the correct current/previous insurer
+        
+
+        # click the 'continue' button to move onto the next page
+        driver.find_element(By.ID, '_eventId_submit').click()
+
+
 
         # waiting for testing purposes
         time.sleep(100000)
@@ -132,7 +173,7 @@ def aa_home_premium_scrape(person_i):
     # run on the ith car/person
     try:
         # scrapes the insurance premium for a single house/person
-        home_premiums = aa_auto_scrape_premium(aa_auto_data_format(person_i))
+        home_premiums = aa_home_scrape_premium(aa_home_data_format(person_i))
 
         if home_premiums != None and not isinstance(home_premiums, str): # if home_premiums is the scraped premiums (NOT just an error message)
 
@@ -140,28 +181,26 @@ def aa_home_premium_scrape(person_i):
             print(home_premiums[0], home_premiums[1], end =" -- ")
 
             # save the scraped premiums to the output dataset
-            output_df.loc[person_i, "Tower_monthly_premium"] = home_premiums[0] # monthly
-            output_df.loc[person_i, "Tower_yearly_premium"] = home_premiums[1] # yearly
+            output_df.loc[person_i, "AA_monthly_premium"] = home_premiums[0] # monthly
+            output_df.loc[person_i, "AA_yearly_premium"] = home_premiums[1] # yearly
 
         # all these are processing error codes
         elif home_premiums == "Doesn't Cover":
-            output_df.loc[person_i, "Tower_Error_code"] = "Website Does Not Quote For This Car House/Person"
-        elif home_premiums == "Unable to find car variant":
-            output_df.loc[person_i, "Tower_Error_code"] = "Unable to find car variant"
+            output_df.loc[person_i, "AA_Error_code"] = "Website Does Not Quote For This Car House/Person"
         elif "Invalid Input Data Error" in home_premiums:
-            output_df.loc[person_i, "Tower_Error_code"] = home_premiums
+            output_df.loc[person_i, "AA_Error_code"] = home_premiums
         else:
-            output_df.loc[person_i, "Tower_Error_code"] = "Unknown Error"
+            output_df.loc[person_i, "AA_Error_code"] = "Unknown Error"
 
     except:
         try: # checks if the reason our code failed is because the 'we need more information' pop up appeareds
             Wait3.until(EC.visibility_of_element_located( (By.XPATH, "//*[@id='ui-id-3' and text() = 'We need more information']") ) )
             print("Need more information", end= " -- ")
-            output_df.loc[person_i, "Tower_Error_code"] = "Webiste Does Not Quote For This Car Variant/ Person"
+            output_df.loc[person_i, "AA_Error_code"] = "Webiste Does Not Quote For This Car Variant/ Person"
         except exceptions.TimeoutException:
             raise Exception("View Errors")
             print("Unknown Error!!", end= " -- ")
-            output_df.loc[person_i, "Tower_Error_code"] = "Unknown Error"
+            output_df.loc[person_i, "AA_Error_code"] = "Unknown Error"
 
 
     end_time = time.time() # get time of end of each iteration
