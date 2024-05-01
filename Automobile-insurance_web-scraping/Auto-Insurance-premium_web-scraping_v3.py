@@ -443,6 +443,8 @@ def auto_scape_all():
     # delete intermediary (individual company) csvs (ensuring blank slate start)
     delete_intermediary_csvs()
 
+
+
 def main():
     # scrape all of the insurance premiums for the given car-person combinations
     auto_scape_all()
