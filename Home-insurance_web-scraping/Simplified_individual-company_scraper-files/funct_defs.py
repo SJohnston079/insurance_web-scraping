@@ -79,7 +79,6 @@ def load_webdriver():
 
     # setting up driver options settings
     chrome_options = Options()
-    options = {'proxy':{'socks5':'syd.socks.ipvanish.com'}}
     chrome_options.add_argument('--log-level=3', )  # Set logging level to WARNING
     chrome_options.add_argument("--disable-cookies")
     driver = webdriver.Chrome(options=chrome_options)
@@ -103,8 +102,17 @@ def export_auto_dataset(output_df, company):
     # getting a string of todays date
     todays_date = datetime.today().strftime("%Y-%m-%d")
     
+    # defining the name of the file we wish to output
+    filename = f'{todays_date}_{company}_output_1'
+
+    # ensuring that the new file doesn't overwrite the older file, by adding 1 to the number at the end until the file has a unqiue name
+    index = 2
+    while os.path.exists(f"{file_directory}\\Scraped_insurance-premium_outputs\\{filename}.csv"):
+        filename = f"{filename[:-1]}{index}" # remove the previously used number, add a new one
+        index += 1
+
     # output the scraped value to a csv
-    output_df.to_csv(f"{file_directory}\\Scraped_insurance-premium_outputs\\{todays_date}_{company}_output.csv", index=False)
+    output_df.to_csv(f"{file_directory}\\Scraped_insurance-premium_outputs\\{filename}.csv", index=False)
 
 
 # takes in a string, and removes all of the non-numeric characters
@@ -168,7 +176,7 @@ def dataset_preprocess(company):
     output_df[f"{company}_selected_address"] = [""] * len(test_auto_data_df)
     
     # adding the variable 'Estimated replacement cost' only to the companies where it is relevant
-    if company in ("AA", "Tower"):
+    if company in ("AA"):
         output_df[f"{company}_estimated_replacement_cost"] = [-1] * len(test_auto_data_df)
 
     output_df.set_index("Sample Number")

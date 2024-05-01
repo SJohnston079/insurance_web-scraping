@@ -442,7 +442,6 @@ def tower_home_premium_scrape(person_i, first_attempt):
         # click the button to confirm the details are correct
         driver.find_element(By.ID, "infoCorrect").click()
 
-
         # entering the sum insured value
         sum_insured_input_box = Wait10.until(EC.presence_of_element_located((By.ID, "sumInsured")))
         sum_insured_input_box.send_keys(Keys.CONTROL + "a") # select the whole current sum insured input box
@@ -456,8 +455,8 @@ def tower_home_premium_scrape(person_i, first_attempt):
         try:
             tower_output_df.loc[person_i, "Tower_estimated_replacement_cost"] = round(funct_defs.convert_money_str_to_int(driver.find_element(By.XPATH, '//*[@id="questionSumInsuredAmount"]/div[5]', cents=True).get_attribute("innerHTML")), 2)
         except: # if there is no estimate of the sum insured value
-            pass
-        finally:
+            tower_output_df.loc[person_i, "Tower_estimated_replacement_cost"] = "No Estimate Provided"
+        else:
             # checking to see if the sum insured value is acceptable
             try:
                 Wait3.until(EC.visibility_of_element_located((By.ID, 'sum-insured-underwriting'))) # checking if the error message occurs
@@ -769,11 +768,8 @@ def tower_home_premium_scrape(person_i, first_attempt):
 
         # if the error is not any of the known ones
         if execute_bottom_code:
-            val = input("Enter 1 to view errors:")
-            if val == "1":
-                raise Exception("View Errors")
-
-            try: # checking if "More info Required pop-up appeared on the screen"
+            # checking if "More info Required pop-up appeared on the screen"
+            try: 
                 Wait3.until(EC.visibility_of_element_located((By.XPATH, '/html/body/span/span/div/section/div/h5')))
             except exceptions.TimeoutException:
                 print("Unknown Error!!", end= " -- ")
@@ -806,17 +802,15 @@ def tower_home_premium_scrape(person_i, first_attempt):
 def tower_auto_scape_all():
     # define how many rows to scrape
     num_cars = len(test_home_data_df)
-    import random
-    x = random.randrange(0,1899)
 
     # initialising person_i variable
-    person_i = x
+    person_i = 0
 
     # define a variable that says whether or not this was the first attempt at scraping for this person
     first_attempt = True
 
     # loop through all examples in test_home_data spreadsheet
-    while person_i < x + 50: 
+    while person_i < num_cars: 
 
         print(f"{person_i}: TOWER: ", end = "") # print out the iteration number
 

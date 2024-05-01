@@ -272,8 +272,8 @@ def ami_home_premium_scrape(person_i):
         # selecting the first dropdown option (assuming this is the correct option as we just input the entire address as we found it on the website)
         chosen_address_option = Wait10.until(EC.element_to_be_clickable((By.XPATH, '//*[@id="ui-id-2"]/li[1]/a'))) # finding the first dropdown option
 
-        chosen_address_option.click() # clicking the button
         ami_output_df.loc[person_i, "AMI_selected_address"] = chosen_address_option.text # outputting the selected address
+        chosen_address_option.click() # clicking the button
 
         # checking for issues with the address that was input
         try:    
@@ -430,7 +430,6 @@ def ami_home_premium_scrape(person_i):
         # roof type
         Select(driver.find_element(By.ID, "roofType")).select_by_value(data["Roof_type"])
         
-        input()
         # says whether or not there is a significant hazard risk
         if test_home_data_df.loc[person_i, "HazardRisk"].upper() == "YES":
             raise Exception("Webiste Does Not Quote For This House/ Person, Issue With HazardRisk Column")
@@ -573,9 +572,6 @@ def ami_home_premium_scrape(person_i):
 
         # if the error is not any of the known ones
         if execute_bottom_code:
-            val = input("Unknown Error - press 1 to view errors")
-            if val == "1":
-                raise Exception("View Errors")
             print("Unknown Error!!", end= " -- ")
             ami_output_df.loc[person_i, "AMI_Error_code"] = error_message
 
